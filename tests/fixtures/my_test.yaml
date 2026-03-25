@@ -1,0 +1,13 @@
+actions:
+  - repo: casadora-core
+    type: write
+    path: docs/hello.md
+    content: "hello from joaquin"
+
+  - repo: casadora-experiments
+    type: mkdir
+    path: experiments/test-1
+
+  - repo: cartero
+    type: delete
+    path: tmp/old-file.txt

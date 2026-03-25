@@ -1,0 +1,13 @@
+actions:
+  - repo: casadora-core
+    type: write
+    path: docs/architecture/network.md
+    content: |
+      # Network
+      - Updated switch inventory
+  - repo: casadora-services
+    type: delete
+    path: docker/legacy-compose.yaml
+  - repo: cartero
+    type: mkdir
+    path: tests/fixtures/generated
