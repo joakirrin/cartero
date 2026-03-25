@@ -26,4 +26,4 @@ CLI:
 python -m cartero path/to/summary.yaml
 ```
 
-The command validates the YAML, groups actions by repo, and prints a dry-run plan. It does not modify files or git state in v0.
+The command validates the YAML, groups actions by repo, and prints a simulated dry-run plan. It does not modify files or git state in v0.

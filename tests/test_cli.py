@@ -23,9 +23,13 @@ class CliTests(unittest.TestCase):
         self.assertIn("Cartero dry-run plan", output)
         self.assertIn("Validated actions: 3", output)
         self.assertIn("casadora-core (1 action)", output)
-        self.assertIn("write docs/architecture/network.md", output)
+        self.assertIn("simulate write file: docs/architecture/network.md", output)
+        self.assertIn("content preview:", output)
+        self.assertIn("# Network", output)
         self.assertIn("casadora-services (1 action)", output)
+        self.assertIn("simulate delete file: docker/legacy-compose.yaml", output)
         self.assertIn("cartero (1 action)", output)
+        self.assertIn("simulate mkdir dir: tests/fixtures/generated", output)
 
     def test_cli_returns_error_for_invalid_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
