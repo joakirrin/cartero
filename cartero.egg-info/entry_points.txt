@@ -1,2 +1,0 @@
-[console_scripts]
-cartero = cartero.cli:main
