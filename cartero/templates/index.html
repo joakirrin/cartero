@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cartero Local UI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3efe6;
+        --panel: #fffdf8;
+        --border: #d5c8b0;
+        --text: #1f1a14;
+        --muted: #6a5d4b;
+        --accent: #23443b;
+        --error-bg: #fff0ec;
+        --error-border: #d78b73;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, #fbf7ee 0, transparent 28%),
+          linear-gradient(180deg, #efe7d8 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 2.2rem;
+      }
+
+      .intro {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 10px 30px rgba(57, 43, 20, 0.08);
+      }
+
+      form {
+        display: grid;
+        gap: 16px;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .secondary-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button {
+        border: 1px solid var(--accent);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--accent);
+        cursor: pointer;
+        font: inherit;
+        padding: 10px 16px;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #fffdf8;
+      }
+
+      button:disabled {
+        border-color: #b5aa96;
+        color: #8f846f;
+        cursor: not-allowed;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 340px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fffefb;
+        color: var(--text);
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        padding: 16px;
+      }
+
+      .result {
+        margin-top: 20px;
+      }
+
+      .result-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .badge {
+        border-radius: 999px;
+        background: #e5efe9;
+        color: var(--accent);
+        font-size: 0.9rem;
+        padding: 6px 12px;
+      }
+
+      .error {
+        border-color: var(--error-border);
+        background: var(--error-bg);
+      }
+
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      @media (max-width: 640px) {
+        main {
+          padding: 24px 14px 40px;
+        }
+
+        .result-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Cartero Local UI</h1>
+      <p class="intro">Paste a Commit Summary YAML, run a dry-run or simulated apply, and review the output below.</p>
+
+      <section class="panel">
+        <form method="post">
+          <label for="yaml_text">Commit Summary YAML</label>
+          <textarea id="yaml_text" name="yaml_text" spellcheck="false">{{ yaml_text }}</textarea>
+
+          <div class="toolbar">
+            <button type="button" id="load-sample">Load sample</button>
+            <button type="submit" name="action" value="dry-run">Dry-run</button>
+            <button type="submit" name="action" value="apply" class="primary">Apply (simulated)</button>
+            <button type="button" id="download-yaml">Download YAML</button>
+          </div>
+        </form>
+      </section>
+
+      {% if error_message %}
+      <section class="panel error result">
+        <div class="result-header">
+          <h2>Error</h2>
+        </div>
+        <pre>{{ error_message }}</pre>
+      </section>
+      {% endif %}
+
+      {% if result_text %}
+      <section class="panel result">
+        <div class="result-header">
+          <h2>Result</h2>
+          <span class="badge">{{ result_label }}</span>
+        </div>
+        <div class="secondary-toolbar">
+          <button
+            type="button"
+            id="download-output"
+            {% if not result_text %}disabled{% endif %}
+          >
+            Download output
+          </button>
+          <button
+            type="button"
+            id="copy-output"
+            {% if not result_text %}disabled{% endif %}
+          >
+            Copy output
+          </button>
+        </div>
+        <pre>{{ result_text }}</pre>
+      </section>
+      {% else %}
+      <section class="panel result">
+        <div class="result-header">
+          <h2>Result</h2>
+          <span class="badge">No output yet</span>
+        </div>
+        <div class="secondary-toolbar">
+          <button type="button" id="download-output" disabled>Download output</button>
+          <button type="button" id="copy-output" disabled>Copy output</button>
+        </div>
+        <pre>Run a dry-run or simulated apply to see output here.</pre>
+      </section>
+      {% endif %}
+    </main>
+
+    <script>
+      const sampleYaml = {{ sample_yaml | tojson }};
+      const outputText = {{ (result_text or "") | tojson }};
+      const outputFilename = {{ (output_filename or "cartero-output.txt") | tojson }};
+      const yamlInput = document.getElementById("yaml_text");
+      const loadSampleButton = document.getElementById("load-sample");
+      const downloadYamlButton = document.getElementById("download-yaml");
+      const downloadOutputButton = document.getElementById("download-output");
+      const copyOutputButton = document.getElementById("copy-output");
+
+      loadSampleButton.addEventListener("click", () => {
+        yamlInput.value = sampleYaml;
+      });
+
+      downloadYamlButton.addEventListener("click", () => {
+        const blob = new Blob([yamlInput.value], { type: "text/yaml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "commit-summary.yaml";
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      downloadOutputButton.addEventListener("click", () => {
+        if (!outputText) {
+          return;
+        }
+
+        const blob = new Blob([outputText], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = outputFilename;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      copyOutputButton.addEventListener("click", async () => {
+        if (!outputText) {
+          return;
+        }
+
+        const originalLabel = copyOutputButton.textContent;
+
+        try {
+          await navigator.clipboard.writeText(outputText);
+          copyOutputButton.textContent = "Copied";
+          window.setTimeout(() => {
+            copyOutputButton.textContent = originalLabel;
+          }, 1200);
+        } catch (_error) {
+          copyOutputButton.textContent = "Copy failed";
+          window.setTimeout(() => {
+            copyOutputButton.textContent = originalLabel;
+          }, 1200);
+        }
+      });
+    </script>
+  </body>
+</html>
