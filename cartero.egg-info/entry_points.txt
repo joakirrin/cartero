@@ -1,3 +1,0 @@
-[console_scripts]
-cartero = cartero.cli:main
-cartero-web = cartero.web:main
