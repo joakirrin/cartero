@@ -13,6 +13,7 @@
         --text: #1f1a14;
         --muted: #6a5d4b;
         --accent: #23443b;
+        --guide-bg: #f7f0df;
         --error-bg: #fff0ec;
         --error-border: #d78b73;
       }
@@ -52,6 +53,29 @@
         border-radius: 14px;
         padding: 18px;
         box-shadow: 0 10px 30px rgba(57, 43, 20, 0.08);
+      }
+
+      .guide {
+        margin-bottom: 20px;
+        background: var(--guide-bg);
+      }
+
+      .guide h2 {
+        margin: 0 0 12px;
+      }
+
+      .guide ol {
+        margin: 0 0 12px 20px;
+        padding: 0;
+      }
+
+      .guide li + li {
+        margin-top: 6px;
+      }
+
+      .guide p {
+        margin: 0;
+        color: var(--muted);
       }
 
       form {
@@ -157,6 +181,17 @@
     <main>
       <h1>Cartero Local UI</h1>
       <p class="intro">Paste a Commit Summary YAML, run a dry-run or simulated apply, and review the output below.</p>
+
+      <section class="panel guide">
+        <h2>How to use Cartero</h2>
+        <ol>
+          <li>Paste your changes (YAML)</li>
+          <li>Click "Dry-run" to preview safely</li>
+          <li>Click "Apply (simulated)" to see execution</li>
+        </ol>
+        <p>No files are changed yet.</p>
+        <p>You don’t need to understand Git or code to use this.</p>
+      </section>
 
       <section class="panel">
         <form method="post">

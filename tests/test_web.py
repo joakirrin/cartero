@@ -20,6 +20,11 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Cartero Local UI", page)
+        self.assertIn("How to use Cartero", page)
+        self.assertIn("Paste your changes (YAML)", page)
+        self.assertIn('Click "Dry-run" to preview safely', page)
+        self.assertIn('Click "Apply (simulated)" to see execution', page)
+        self.assertIn("No files are changed yet.", page)
         self.assertIn("Load sample", page)
         self.assertIn("Dry-run", page)
         self.assertIn("Apply (simulated)", page)
