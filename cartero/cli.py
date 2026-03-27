@@ -6,12 +6,20 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import yaml
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
 from cartero.executor import execute_actions
 from cartero.generator import generate_summary_result_from_diff
+from cartero.git import (
+    GitError,
+    commit as git_commit,
+    get_changed_files,
+    get_diff,
+    stage_files,
+)
 from cartero.llm import LLMCallError, LLMConfigError
 from cartero.parser import ParseError, load_summary
 from cartero.simulator import SimulatedAction, simulate_actions
@@ -62,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a file containing the diff. Reads from stdin when omitted.",
     )
     generate_parser.set_defaults(handler=handle_generate)
+
+    commit_parser = subparsers.add_parser(
+        "commit",
+        prog="cartero commit",
+        help="Stage selected files, generate a summary, and create a git commit.",
+    )
+    commit_parser.set_defaults(handler=handle_commit)
     return parser
 
 
@@ -96,6 +111,110 @@ def handle_generate(
     if result.warning_message:
         error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
     console.print(result.yaml_text, markup=False, end="")
+    return 0
+
+
+def handle_commit(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    del args
+
+    try:
+        changed_files = get_changed_files()
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    if not changed_files:
+        console.print("Nothing to commit. Working tree clean.")
+        return 0
+
+    console.print("Changed files:")
+    for index, path in enumerate(changed_files, start=1):
+        console.print(f"{index}. {path}")
+
+    console.print('Stage files (numbers separated by spaces, or "a" for all): ', end="")
+    selection = input().strip()
+
+    if not selection:
+        error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
+        return 2
+
+    if selection.lower() in {"a", "all"}:
+        selected_paths = changed_files
+    else:
+        selected_paths: list[str] = []
+        seen_indexes: set[int] = set()
+        try:
+            for token in selection.split():
+                selected_index = int(token)
+                if selected_index < 1 or selected_index > len(changed_files):
+                    raise ValueError
+                if selected_index in seen_indexes:
+                    continue
+                seen_indexes.add(selected_index)
+                selected_paths.append(changed_files[selected_index - 1])
+        except ValueError:
+            error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
+            return 2
+
+        if not selected_paths:
+            error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
+            return 2
+
+    try:
+        stage_files(selected_paths)
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    try:
+        diff_text = get_diff()
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    try:
+        with console.status("Generating commit summary…"):
+            result = generate_summary_result_from_diff(diff_text)
+    except (LLMConfigError, LLMCallError, ValueError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    if result.warning_message:
+        error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
+
+    console.print(result.yaml_text, markup=False)
+    console.print("Commit with this summary? [y/N]: ", end="")
+    confirmation = input().strip()
+
+    if confirmation.lower() not in {"y", "yes"}:
+        console.print("Aborted.")
+        return 0
+
+    try:
+        data = yaml.safe_load(result.yaml_text)
+    except yaml.YAMLError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    subject = ""
+    body = None
+    if isinstance(data, dict):
+        subject = str(data.get("summary", "")).strip()
+        body_text = str(data.get("reason", "")).strip()
+        body = body_text or None
+
+    if not subject:
+        subject = "chore: update files"
+
+    try:
+        commit_hash = git_commit(subject, body)
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    console.print(f"✓ Committed: {commit_hash}")
     return 0
 
 
@@ -162,7 +281,8 @@ def _describe_mode(mode: str) -> str:
 
 def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] in {"run", "generate"}:
+    SUBCOMMANDS = {"run", "generate", "commit"}
+    if args and args[0] in SUBCOMMANDS:
         return args
     return ["run", *args]
 

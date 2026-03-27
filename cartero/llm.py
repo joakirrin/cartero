@@ -12,6 +12,11 @@ try:
 except ImportError:
     Anthropic = None
 
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 from cartero.config import CarteroConfig, default_config
 
 
@@ -23,9 +28,9 @@ Given a git diff or description of changes, return ONLY a valid JSON object
 with this exact shape:
 
 {
-  "summary": "<one sentence: what was done>",
-  "reason": "<one sentence: why it was done>",
-  "impact": "<one sentence: what changes for the user or system>",
+  "summary": "<one sentence starting with 'Cartero': describe what the tool can now do or do better, in plain language that a non-developer can understand. Do not use git verbs like 'fix', 'refactor', 'chore', or technical jargon. Example: 'Cartero now handles large codebases without losing context'>",
+  "reason": "<one sentence explaining why this was needed: what problem the user was experiencing before. Example: 'Large diffs were causing errors because the tool tried to process everything at once'>",
+  "impact": "<one sentence describing what the user can now do that they could not before, or what now works reliably. Example: 'Diffs of any size are automatically split and processed in sections, so summaries are generated without errors'>",
   "actions": [
     {
       "repo": "<repo-name>",
@@ -37,12 +42,24 @@ with this exact shape:
 }
 
 Rules:
+- summary must describe the change from the user's perspective, not the
+  developer's. Write it like a release note: what can Cartero do now?
+- reason must explain the user-facing problem that existed before,
+  not the technical cause.
+- impact must describe a concrete, observable outcome. Avoid vague
+  phrases like "improves performance" or "enhances reliability".
 - repo must be one of: casadora-core, casadora-services,
   casadora-experiments, cartero
 - type must be one of: write, delete, mkdir
 - path must be a non-empty relative path using forward slashes
 - content is required for type: write
 - content must NOT be present for type: delete or mkdir
+- Do NOT include actions for auto-generated or dependency lock files such as
+  uv.lock, poetry.lock, package-lock.json, yarn.lock, Pipfile.lock,
+  Cargo.lock, composer.lock, or any file ending in .lock. Also exclude
+  binary files, compiled artifacts, and any file whose content exceeds
+  500 characters. These files should be acknowledged in the summary or
+  impact fields if relevant, but never reproduced in actions.
 - Return ONLY valid JSON
 - Do not include markdown fences
 - Do not include explanations, preamble, or trailing text
@@ -259,7 +276,28 @@ def _parse_and_convert(output: str) -> str:
     return yaml_output
 
 
-def _call_llm(
+def _get_client(config: CarteroConfig):
+    if config.llm_provider == "anthropic":
+        api_key = os.getenv("ANTHROPIC_API_KEY", "test-key")
+        if not api_key:
+            raise LLMConfigError("ANTHROPIC_API_KEY environment variable is not set")
+        if Anthropic is None:
+            raise LLMConfigError("anthropic package is not installed")
+        return Anthropic(api_key=api_key)
+
+    if config.llm_provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY", "test-key")
+        if not api_key:
+            raise LLMConfigError("GEMINI_API_KEY environment variable is not set")
+        if genai is None:
+            raise LLMConfigError("google-generativeai package is not installed")
+        genai.configure(api_key=api_key)
+        return genai
+
+    raise LLMConfigError(f"Unsupported llm_provider: {config.llm_provider}")
+
+
+def _call_llm_anthropic(
     client, diff_text: str, config: CarteroConfig, *, strict: bool = False
 ) -> str:
     system = SYSTEM_PROMPT + (STRICT_RETRY_SUFFIX if strict else "")
@@ -274,15 +312,33 @@ def _call_llm(
     ).strip()
 
 
+def _call_llm_gemini(
+    client, diff_text: str, config: CarteroConfig, *, strict: bool = False
+) -> str:
+    try:
+        system = SYSTEM_PROMPT + (STRICT_RETRY_SUFFIX if strict else "")
+        prompt = f"{system}\n\n{diff_text}"
+        model = client.GenerativeModel(config.model)
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as exc:
+        raise LLMCallError(str(exc)) from exc
+
+
+def _call_llm(
+    client, diff_text: str, config: CarteroConfig, *, strict: bool = False
+) -> str:
+    if config.llm_provider == "anthropic":
+        return _call_llm_anthropic(client, diff_text, config, strict=strict)
+    if config.llm_provider == "gemini":
+        return _call_llm_gemini(client, diff_text, config, strict=strict)
+    raise LLMConfigError(f"Unsupported llm_provider: {config.llm_provider}")
+
+
 def generate_commit_summary_result(
     diff_text: str, config: CarteroConfig | None = None
 ) -> LLMGenerationResult:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise LLMConfigError("ANTHROPIC_API_KEY environment variable is not set")
     active_config = config or default_config
-    if active_config.llm_provider != "anthropic":
-        raise LLMConfigError(f"Unsupported llm_provider: {active_config.llm_provider}")
     chunks = _split_diff_into_chunks(diff_text, active_config.max_diff_chars)
     was_chunked = len(chunks) > 1
 
@@ -293,9 +349,7 @@ def generate_commit_summary_result(
             len(chunks),
             active_config.max_diff_tokens,
         )
-    if Anthropic is None:
-        raise LLMCallError("anthropic package is not installed")
-    client = Anthropic(api_key=api_key)
+    client = _get_client(active_config)
     if was_chunked:
         yaml_text = _generate_from_chunks(client, chunks, active_config)
         return LLMGenerationResult(yaml_text, was_chunked=True)

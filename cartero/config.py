@@ -13,6 +13,7 @@ class CarteroConfig:
     max_tokens: int = 8192
     max_retries: int = 3
     max_diff_tokens: int = 30_000
+    clean_after_publish_days: int = 7
 
     @property
     def max_diff_chars(self) -> int:
