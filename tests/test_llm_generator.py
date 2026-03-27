@@ -7,10 +7,16 @@ from cartero.config import CarteroConfig
 from cartero.generator import (
     CHUNKED_DIFF_WARNING,
     SummaryGenerationResult,
+    generate_context_recap,
     generate_summary_from_diff,
     generate_summary_result_from_diff,
 )
-from cartero.llm import LLMCallError, LLMConfigError
+from cartero.llm import (
+    LLMCallError,
+    LLMConfigError,
+    LLMGenerationResult,
+    generate_commit_summary_result,
+)
 
 
 VALID_JSON = """{
@@ -26,6 +32,14 @@ VALID_JSON = """{
     }
   ]
 }"""
+
+VALID_RECAP = """Goal: Keep Cartero outputs aligned with user intent.
+User problem: Raw conversation context is noisy and makes downstream summaries inconsistent.
+Key decisions: Compress notes into a fixed recap focused on intent, tradeoffs, and user-visible outcomes.
+Tradeoffs: Some implementation detail is omitted to keep the recap concise.
+Expected user-visible outcome: Generated summaries and explanations stay focused on why the change matters.
+Explanation for non-technical users: Cartero now turns messy notes into a short brief that explains the purpose of a change in plain language.
+"""
 
 
 def _make_llm_response(text: str) -> MagicMock:
@@ -68,6 +82,93 @@ class HappyPathTests(unittest.TestCase):
             result = generate_summary_from_diff("diff --git a/x b/x")
 
         self.assertIn("summary:", result)
+
+    def test_uses_only_diff_when_context_is_missing(self) -> None:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _make_llm_response(VALID_JSON)
+
+        with patch("cartero.llm.Anthropic", return_value=mock_client):
+            generate_commit_summary_result("diff --git a/x b/x")
+
+        prompt_text = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        self.assertEqual(prompt_text, "diff --git a/x b/x")
+
+    def _patch_anthropic(self, response_text: str):
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _make_llm_response(response_text)
+        return patch("cartero.llm.Anthropic", return_value=mock_client)
+
+
+class ContextRecapTests(unittest.TestCase):
+    BASE_CONFIG = CarteroConfig(max_retries=3)
+
+    def test_returns_structured_recap(self) -> None:
+        with self._patch_anthropic(VALID_RECAP):
+            result = generate_context_recap("messy copied notes")
+
+        self.assertTrue(result.startswith("Goal:"))
+        self.assertIn("Expected user-visible outcome:", result)
+
+    def test_strips_markdown_fences_for_recap(self) -> None:
+        fenced = f"```text\n{VALID_RECAP}\n```"
+        with self._patch_anthropic(fenced):
+            result = generate_context_recap("messy copied notes")
+
+        self.assertTrue(result.startswith("Goal:"))
+        self.assertNotIn("```", result)
+
+    def test_retries_when_recap_headers_are_missing(self) -> None:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [
+            _make_llm_response("short paragraph without structure"),
+            _make_llm_response(VALID_RECAP),
+        ]
+
+        with patch("cartero.llm.Anthropic", return_value=mock_client):
+            result = generate_context_recap("messy copied notes", config=self.BASE_CONFIG)
+
+        self.assertTrue(result.startswith("Goal:"))
+        self.assertEqual(mock_client.messages.create.call_count, 2)
+        first_call_system = mock_client.messages.create.call_args_list[0].kwargs["system"]
+        second_call_system = mock_client.messages.create.call_args_list[1].kwargs["system"]
+        self.assertNotIn("did not follow the required structure", first_call_system)
+        self.assertIn("did not follow the required structure", second_call_system)
+
+    def test_raises_value_error_for_empty_context(self) -> None:
+        with self.assertRaises(ValueError):
+            generate_context_recap("")
+
+    def test_summary_generation_compresses_context_before_main_prompt(self) -> None:
+        with patch(
+            "cartero.generator.llm.generate_context_recap",
+            return_value=VALID_RECAP,
+        ) as mock_recap, patch(
+            "cartero.generator.llm.generate_commit_summary_result",
+            return_value=LLMGenerationResult(yaml_text="summary: test\n", was_chunked=False),
+        ) as mock_summary:
+            result = generate_summary_result_from_diff(
+                "diff --git a/x b/x",
+                raw_context="messy copied notes",
+            )
+
+        self.assertEqual(result.yaml_text, "summary: test\n")
+        mock_recap.assert_called_once_with("messy copied notes", None)
+        mock_summary.assert_called_once_with(
+            "diff --git a/x b/x",
+            None,
+            context_recap=VALID_RECAP,
+        )
+
+    def test_main_generation_prompt_includes_recap_and_diff(self) -> None:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _make_llm_response(VALID_JSON)
+
+        with patch("cartero.llm.Anthropic", return_value=mock_client):
+            generate_commit_summary_result("diff --git a/x b/x", context_recap=VALID_RECAP)
+
+        prompt_text = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Structured context recap:\nGoal:", prompt_text)
+        self.assertIn("Git diff:\ndiff --git a/x b/x", prompt_text)
 
     def _patch_anthropic(self, response_text: str):
         mock_client = MagicMock()
@@ -113,9 +214,10 @@ class TruncationTests(unittest.TestCase):
 
         mock_args = MagicMock()
         mock_args.diff_file = None
+        mock_args.stdin = False
 
         with patch("cartero.cli.generate_summary_result_from_diff") as mock_generate, patch(
-            "sys.stdin", io.StringIO("fake diff content")
+            "cartero.cli.get_diff", return_value="fake diff content"
         ):
             mock_generate.return_value = SummaryGenerationResult(
                 yaml_text="summary: test\n",

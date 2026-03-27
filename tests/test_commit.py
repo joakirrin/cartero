@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from cartero.cli import main
 from cartero.generator import SummaryGenerationResult
-from cartero.git import GitError, commit, get_changed_files, stage_files
+from cartero.git import GitError, commit, get_changed_files, get_diff, stage_files
 from cartero.llm import LLMCallError
 
 
@@ -61,6 +63,44 @@ class GitModuleTests(unittest.TestCase):
             check=False,
         )
 
+    def test_get_diff_prefers_staged_changes(self) -> None:
+        with patch("cartero.git.subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                self._completed_process(stdout="staged.py\n"),
+                self._completed_process(stdout="diff --git a/staged.py b/staged.py\n"),
+            ]
+
+            diff_text = get_diff()
+
+        self.assertEqual(diff_text, "diff --git a/staged.py b/staged.py\n")
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["git", "diff", "--cached", "--name-only"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["git", "diff", "--cached"],
+        )
+
+    def test_get_diff_falls_back_to_working_tree_when_nothing_is_staged(self) -> None:
+        with patch("cartero.git.subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                self._completed_process(stdout=""),
+                self._completed_process(stdout="diff --git a/file.py b/file.py\n"),
+            ]
+
+            diff_text = get_diff()
+
+        self.assertEqual(diff_text, "diff --git a/file.py b/file.py\n")
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["git", "diff", "--cached", "--name-only"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["git", "diff"],
+        )
+
     def test_commit_returns_short_hash(self) -> None:
         with patch("cartero.git.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
@@ -85,6 +125,13 @@ class GitModuleTests(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def _completed_process(self, *, stdout: str, returncode: int = 0, stderr: str = ""):
+        result = MagicMock()
+        result.returncode = returncode
+        result.stdout = stdout
+        result.stderr = stderr
+        return result
 
 
 class CommitCommandTests(unittest.TestCase):
@@ -168,12 +215,52 @@ class CommitCommandTests(unittest.TestCase):
         self.assertIn("error:", stderr)
         self.assertIn("Changed files:", stdout)
 
-    def _run_commit(self, input_lines: list[str]) -> tuple[int, str, str]:
+    def test_commit_passes_optional_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context_path = Path(temp_dir) / "context.txt"
+            context_path.write_text("messy notes", encoding="utf-8")
+
+            with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+                "cartero.cli.stage_files"
+            ) as mock_stage_files, patch(
+                "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+            ), patch(
+                "cartero.cli.generate_summary_result_from_diff",
+                return_value=SummaryGenerationResult(
+                    yaml_text=(
+                        "summary: add commit command\n"
+                        "reason: needed for git flow\n"
+                        "actions: []\n"
+                    ),
+                    warning_message=None,
+                ),
+            ) as mock_generate, patch(
+                "cartero.cli.git_commit", return_value="abc1234"
+            ):
+                exit_code, stdout, stderr = self._run_commit(
+                    ["a", "y"],
+                    argv=["--context-file", str(context_path)],
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("abc1234", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_generate.assert_called_once_with(
+            "diff --git a/cartero/cli.py ...",
+            raw_context="messy notes",
+        )
+
+    def _run_commit(
+        self,
+        input_lines: list[str],
+        argv: list[str] | None = None,
+    ) -> tuple[int, str, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
         stdin = io.StringIO("\n".join(input_lines) + "\n")
 
         with patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):
-            exit_code = main(["commit"])
+            exit_code = main(["commit", *(argv or [])])
 
         return exit_code, stdout.getvalue(), stderr.getvalue()

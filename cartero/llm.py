@@ -22,7 +22,7 @@ from cartero.config import CarteroConfig, default_config
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a commit summary generator for the Cartero tool.
+COMMIT_SUMMARY_SYSTEM_PROMPT = """You are a commit summary generator for the Cartero tool.
 
 Given a git diff or description of changes, return ONLY a valid JSON object
 with this exact shape:
@@ -48,6 +48,11 @@ Rules:
   not the technical cause.
 - impact must describe a concrete, observable outcome. Avoid vague
   phrases like "improves performance" or "enhances reliability".
+- If the input includes a "Structured context recap" section, use it to
+  understand intent, audience framing, tradeoffs, and why the change
+  matters. Use the git diff as the source of truth for what changed.
+- If no structured recap is provided, infer carefully from the diff and
+  avoid over-claiming intent that is not supported.
 - repo must be one of: casadora-core, casadora-services,
   casadora-experiments, cartero
 - type must be one of: write, delete, mkdir
@@ -70,6 +75,67 @@ IMPORTANT: Your previous response could not be parsed.
 Return ONLY a raw JSON object. No markdown, no explanation, no extra text.
 The very first character of your response must be '{' and the last must be '}'.
 """
+
+CONTEXT_RECAP_SYSTEM_PROMPT = """You are Cartero's context processor.
+
+Cartero turns code changes into structured outputs like commit summaries,
+changelogs, FAQs, and product-facing explanations.
+
+You receive raw context copied from an LLM conversation, notes, or free text.
+This input may be messy, redundant, incomplete, or overly detailed.
+
+Your job is to compress that input into a short, high-signal recap that will be
+used together with a git diff.
+
+Important:
+
+* The git diff will show what changed
+* Your recap must explain why it matters
+* Focus on intent, decisions, tradeoffs, and expected user-visible outcomes
+* Do not describe code line by line
+* Do not restate the whole conversation
+* Do not hallucinate missing intent
+
+Return ONLY this structure:
+
+Goal:
+User problem:
+Key decisions:
+Tradeoffs:
+Expected user-visible outcome:
+Explanation for non-technical users:
+
+Rules:
+
+* Be concise
+* Remove redundancy
+* Ignore implementation details unless they affect user-visible behavior
+* Prefer clarity over completeness
+* If something is unclear, leave it brief rather than guessing
+
+Output only the structured recap.
+"""
+
+CONTEXT_RECAP_RETRY_SUFFIX = """
+IMPORTANT: Your previous response did not follow the required structure.
+Return ONLY this exact set of section headers in this order:
+Goal:
+User problem:
+Key decisions:
+Tradeoffs:
+Expected user-visible outcome:
+Explanation for non-technical users:
+Do not add markdown fences, bullets outside the sections, or extra text.
+"""
+
+CONTEXT_RECAP_HEADERS = (
+    "Goal:",
+    "User problem:",
+    "Key decisions:",
+    "Tradeoffs:",
+    "Expected user-visible outcome:",
+    "Explanation for non-technical users:",
+)
 
 
 class LLMConfigError(Exception):
@@ -172,6 +238,21 @@ def _merge_results(results: list[dict]) -> dict:
     return merged
 
 
+def _build_commit_generation_input(
+    diff_text: str,
+    *,
+    context_recap: str | None = None,
+) -> str:
+    if not context_recap:
+        return diff_text
+    return (
+        "Structured context recap:\n"
+        f"{context_recap}\n\n"
+        "Git diff:\n"
+        f"{diff_text}"
+    )
+
+
 def _generate_from_chunks(
     client,
     chunks: list[str],
@@ -184,7 +265,14 @@ def _generate_from_chunks(
 
         for attempt in range(1, max(1, config.max_retries) + 1):
             try:
-                raw_output = _call_llm(client, chunk, config, strict=attempt > 1)
+                raw_output = _call_llm(
+                    client,
+                    chunk,
+                    config,
+                    system_prompt=COMMIT_SUMMARY_SYSTEM_PROMPT,
+                    retry_suffix=STRICT_RETRY_SUFFIX,
+                    strict=attempt > 1,
+                )
                 logger.debug(
                     "Raw LLM output for chunk %d (attempt %d):\n%s",
                     chunk_index,
@@ -276,6 +364,26 @@ def _parse_and_convert(output: str) -> str:
     return yaml_output
 
 
+def _parse_context_recap(output: str) -> str:
+    recap_text = _strip_fences(output).strip()
+    if not recap_text:
+        raise LLMCallError("Model returned empty output")
+    if not recap_text.startswith(CONTEXT_RECAP_HEADERS[0]):
+        raise LLMCallError("Model returned an invalid context recap: missing Goal header")
+
+    last_position = -1
+    for header in CONTEXT_RECAP_HEADERS:
+        position = recap_text.find(header)
+        if position == -1:
+            raise LLMCallError(
+                f"Model returned an invalid context recap: missing {header[:-1]!r} section"
+            )
+        if position <= last_position:
+            raise LLMCallError("Model returned an invalid context recap: headers out of order")
+        last_position = position
+    return recap_text
+
+
 def _get_client(config: CarteroConfig):
     if config.llm_provider == "anthropic":
         api_key = os.getenv("ANTHROPIC_API_KEY", "test-key")
@@ -298,14 +406,20 @@ def _get_client(config: CarteroConfig):
 
 
 def _call_llm_anthropic(
-    client, diff_text: str, config: CarteroConfig, *, strict: bool = False
+    client,
+    prompt_text: str,
+    config: CarteroConfig,
+    *,
+    system_prompt: str,
+    retry_suffix: str,
+    strict: bool = False,
 ) -> str:
-    system = SYSTEM_PROMPT + (STRICT_RETRY_SUFFIX if strict else "")
+    system = system_prompt + (retry_suffix if strict else "")
     message = client.messages.create(
         model=config.model,
         max_tokens=config.max_tokens,
         system=system,
-        messages=[{"role": "user", "content": diff_text}],
+        messages=[{"role": "user", "content": prompt_text}],
     )
     return "".join(
         block.text for block in message.content if getattr(block, "type", None) == "text"
@@ -313,11 +427,17 @@ def _call_llm_anthropic(
 
 
 def _call_llm_gemini(
-    client, diff_text: str, config: CarteroConfig, *, strict: bool = False
+    client,
+    prompt_text: str,
+    config: CarteroConfig,
+    *,
+    system_prompt: str,
+    retry_suffix: str,
+    strict: bool = False,
 ) -> str:
     try:
-        system = SYSTEM_PROMPT + (STRICT_RETRY_SUFFIX if strict else "")
-        prompt = f"{system}\n\n{diff_text}"
+        system = system_prompt + (retry_suffix if strict else "")
+        prompt = f"{system}\n\n{prompt_text}"
         model = client.GenerativeModel(config.model)
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -326,20 +446,44 @@ def _call_llm_gemini(
 
 
 def _call_llm(
-    client, diff_text: str, config: CarteroConfig, *, strict: bool = False
+    client,
+    prompt_text: str,
+    config: CarteroConfig,
+    *,
+    system_prompt: str,
+    retry_suffix: str,
+    strict: bool = False,
 ) -> str:
     if config.llm_provider == "anthropic":
-        return _call_llm_anthropic(client, diff_text, config, strict=strict)
+        return _call_llm_anthropic(
+            client,
+            prompt_text,
+            config,
+            system_prompt=system_prompt,
+            retry_suffix=retry_suffix,
+            strict=strict,
+        )
     if config.llm_provider == "gemini":
-        return _call_llm_gemini(client, diff_text, config, strict=strict)
+        return _call_llm_gemini(
+            client,
+            prompt_text,
+            config,
+            system_prompt=system_prompt,
+            retry_suffix=retry_suffix,
+            strict=strict,
+        )
     raise LLMConfigError(f"Unsupported llm_provider: {config.llm_provider}")
 
 
 def generate_commit_summary_result(
-    diff_text: str, config: CarteroConfig | None = None
+    diff_text: str,
+    config: CarteroConfig | None = None,
+    *,
+    context_recap: str | None = None,
 ) -> LLMGenerationResult:
     active_config = config or default_config
-    chunks = _split_diff_into_chunks(diff_text, active_config.max_diff_chars)
+    llm_input = _build_commit_generation_input(diff_text, context_recap=context_recap)
+    chunks = _split_diff_into_chunks(llm_input, active_config.max_diff_chars)
     was_chunked = len(chunks) > 1
 
     if was_chunked:
@@ -356,7 +500,14 @@ def generate_commit_summary_result(
     last_error: LLMCallError | None = None
     for attempt in range(1, max(1, active_config.max_retries) + 1):
         try:
-            raw_output = _call_llm(client, diff_text, active_config, strict=attempt > 1)
+            raw_output = _call_llm(
+                client,
+                llm_input,
+                active_config,
+                system_prompt=COMMIT_SUMMARY_SYSTEM_PROMPT,
+                retry_suffix=STRICT_RETRY_SUFFIX,
+                strict=attempt > 1,
+            )
             logger.debug("Raw LLM output (attempt %d):\n%s", attempt, raw_output)
             return LLMGenerationResult(_parse_and_convert(raw_output), was_chunked)
         except LLMCallError as exc:
@@ -370,6 +521,46 @@ def generate_commit_summary_result(
 
 
 def generate_commit_summary(
-    diff_text: str, config: CarteroConfig | None = None
+    diff_text: str,
+    config: CarteroConfig | None = None,
+    *,
+    context_recap: str | None = None,
 ) -> str:
-    return generate_commit_summary_result(diff_text, config).yaml_text
+    return generate_commit_summary_result(
+        diff_text,
+        config,
+        context_recap=context_recap,
+    ).yaml_text
+
+
+def generate_context_recap(
+    raw_context: str, config: CarteroConfig | None = None
+) -> str:
+    if not isinstance(raw_context, str) or not raw_context.strip():
+        raise ValueError("raw_context must be a non-empty string")
+
+    active_config = config or default_config
+    client = _get_client(active_config)
+    last_error: LLMCallError | None = None
+
+    for attempt in range(1, max(1, active_config.max_retries) + 1):
+        try:
+            raw_output = _call_llm(
+                client,
+                raw_context,
+                active_config,
+                system_prompt=CONTEXT_RECAP_SYSTEM_PROMPT,
+                retry_suffix=CONTEXT_RECAP_RETRY_SUFFIX,
+                strict=attempt > 1,
+            )
+            logger.debug("Raw context recap output (attempt %d):\n%s", attempt, raw_output)
+            return _parse_context_recap(raw_output)
+        except LLMCallError as exc:
+            last_error = exc
+            logger.warning("Context recap attempt %d failed: %s", attempt, exc)
+        except Exception as exc:
+            raise LLMCallError(str(exc)) from exc
+
+    raise LLMCallError(
+        f"Failed after {max(1, active_config.max_retries)} attempts. Last error: {last_error}"
+    )

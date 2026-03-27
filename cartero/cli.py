@@ -12,7 +12,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from cartero.executor import execute_actions
-from cartero.generator import generate_summary_result_from_diff
+from cartero.generator import generate_context_recap, generate_summary_result_from_diff
 from cartero.git import (
     GitError,
     commit as git_commit,
@@ -64,17 +64,45 @@ def build_parser() -> argparse.ArgumentParser:
         prog="cartero generate",
         help="Generate a Cartero YAML summary from a diff.",
     )
-    generate_parser.add_argument(
+    generate_diff_source = generate_parser.add_mutually_exclusive_group()
+    generate_diff_source.add_argument(
         "--diff-file",
         metavar="PATH",
-        help="Path to a file containing the diff. Reads from stdin when omitted.",
+        help="Path to a file containing the diff.",
+    )
+    generate_diff_source.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read the diff from stdin instead of detecting it from git.",
+    )
+    generate_parser.add_argument(
+        "--context-file",
+        metavar="PATH",
+        help="Optional path to raw context. Cartero will compress it before generation.",
     )
     generate_parser.set_defaults(handler=handle_generate)
+
+    context_parser = subparsers.add_parser(
+        "context",
+        prog="cartero context",
+        help="Compress raw notes or conversation context into a structured recap.",
+    )
+    context_parser.add_argument(
+        "--context-file",
+        metavar="PATH",
+        help="Path to a file containing raw context. Reads from stdin when omitted.",
+    )
+    context_parser.set_defaults(handler=handle_context)
 
     commit_parser = subparsers.add_parser(
         "commit",
         prog="cartero commit",
         help="Stage selected files, generate a summary, and create a git commit.",
+    )
+    commit_parser.add_argument(
+        "--context-file",
+        metavar="PATH",
+        help="Optional path to raw context. Cartero will compress it before generation.",
     )
     commit_parser.set_defaults(handler=handle_commit)
     return parser
@@ -103,8 +131,15 @@ def handle_generate(
     args: argparse.Namespace, console: Console, error_console: Console
 ) -> int:
     try:
-        diff_text = _read_diff_text(args.diff_file)
-        result = generate_summary_result_from_diff(diff_text)
+        diff_text = _resolve_generate_diff(args)
+        raw_context = _read_optional_text_input(_get_arg_value(args, "context_file"))
+        result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
+    except NoDiffError as exc:
+        console.print(str(exc))
+        return 0
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
     except (LLMConfigError, LLMCallError, ValueError) as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
@@ -114,11 +149,22 @@ def handle_generate(
     return 0
 
 
+def handle_context(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    try:
+        raw_context = _read_text_input(_get_arg_value(args, "context_file"))
+        recap = generate_context_recap(raw_context)
+    except (LLMConfigError, LLMCallError, ValueError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+    console.print(recap, markup=False, end="")
+    return 0
+
+
 def handle_commit(
     args: argparse.Namespace, console: Console, error_console: Console
 ) -> int:
-    del args
-
     try:
         changed_files = get_changed_files()
     except GitError as exc:
@@ -175,8 +221,9 @@ def handle_commit(
         return 2
 
     try:
+        raw_context = _read_optional_text_input(_get_arg_value(args, "context_file"))
         with console.status("Generating commit summary…"):
-            result = generate_summary_result_from_diff(diff_text)
+            result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
     except (LLMConfigError, LLMCallError, ValueError) as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
@@ -281,16 +328,50 @@ def _describe_mode(mode: str) -> str:
 
 def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    SUBCOMMANDS = {"run", "generate", "commit"}
+    SUBCOMMANDS = {"run", "generate", "context", "commit"}
     if args and args[0] in SUBCOMMANDS:
         return args
     return ["run", *args]
 
 
 def _read_diff_text(diff_file: str | None) -> str:
-    if diff_file is None:
+    return _read_text_input(diff_file)
+
+
+def _resolve_generate_diff(args: argparse.Namespace) -> str:
+    diff_file = args.diff_file
+    if diff_file is not None:
+        return _read_diff_text(diff_file)
+    if bool(_get_arg_value(args, "stdin")):
+        return _read_text_input(None)
+
+    diff_text = get_diff()
+    if diff_text.strip():
+        return diff_text
+    raise NoDiffError("No changes detected. You can paste a diff or make changes first.")
+
+
+def _read_text_input(path: str | None) -> str:
+    if path is None:
         return sys.stdin.read()
-    return Path(diff_file).read_text(encoding="utf-8")
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Unable to read input file {path}: {exc}") from exc
+
+
+def _read_optional_text_input(path: str | None) -> str | None:
+    if path is None:
+        return None
+    return _read_text_input(path)
+
+
+def _get_arg_value(args: argparse.Namespace, name: str) -> object | None:
+    return vars(args).get(name)
+
+
+class NoDiffError(ValueError):
+    pass
 
 
 def _build_status_line() -> Text:

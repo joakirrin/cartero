@@ -22,11 +22,9 @@ def get_changed_files() -> list[str]:
 
 
 def get_diff() -> str:
-    if _has_head_commit():
-        result = _run_git_command(["git", "diff", "HEAD"])
-    else:
-        result = _run_git_command(["git", "diff", "--cached"])
-    return result.stdout
+    if _has_staged_changes():
+        return _run_git_command(["git", "diff", "--cached"]).stdout
+    return _run_git_command(["git", "diff"]).stdout
 
 
 def stage_files(paths: list[str]) -> None:
@@ -48,18 +46,13 @@ def commit(message: str, body: str | None = None) -> str:
     return match.group(1)
 
 
-def _has_head_commit() -> bool:
-    result = _run_git_command(
-        ["git", "rev-parse", "--verify", "HEAD"],
-        allow_no_head=True,
-    )
-    return result.returncode == 0
+def _has_staged_changes() -> bool:
+    result = _run_git_command(["git", "diff", "--cached", "--name-only"])
+    return bool(result.stdout.strip())
 
 
 def _run_git_command(
     command: list[str],
-    *,
-    allow_no_head: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
@@ -75,11 +68,4 @@ def _run_git_command(
         return result
 
     stderr = (result.stderr or "").strip()
-    if allow_no_head and _is_missing_head_error(stderr):
-        return result
-
     raise GitError(stderr or f"git command failed with exit code {result.returncode}")
-
-
-def _is_missing_head_error(stderr: str) -> bool:
-    return "Needed a single revision" in stderr or "unknown revision or path not in the working tree" in stderr

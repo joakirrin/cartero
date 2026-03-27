@@ -83,8 +83,9 @@ def create_app() -> Flask:
     @app.post("/generate")
     def generate() -> tuple[Any, int]:
         diff_text = request.form.get("diff_text", "")
+        raw_context = request.form.get("context_text") or None
         try:
-            result = generate_summary_result_from_diff(diff_text)
+            result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except (LLMConfigError, LLMCallError) as exc:
