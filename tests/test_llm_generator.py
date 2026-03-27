@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from cartero.config import CarteroConfig
+from cartero import llm as llm_module
 from cartero.generator import (
     CHUNKED_DIFF_WARNING,
     SummaryGenerationResult,
@@ -87,7 +88,9 @@ class HappyPathTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response(VALID_JSON)
 
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             generate_commit_summary_result("diff --git a/x b/x")
 
         prompt_text = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
@@ -96,7 +99,11 @@ class HappyPathTests(unittest.TestCase):
     def _patch_anthropic(self, response_text: str):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response(response_text)
-        return patch("cartero.llm.Anthropic", return_value=mock_client)
+        return patch.multiple(
+            "cartero.llm",
+            Anthropic=MagicMock(return_value=mock_client),
+            os=MagicMock(getenv=MagicMock(return_value="unit-test-key")),
+        )
 
 
 class ContextRecapTests(unittest.TestCase):
@@ -124,7 +131,9 @@ class ContextRecapTests(unittest.TestCase):
             _make_llm_response(VALID_RECAP),
         ]
 
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             result = generate_context_recap("messy copied notes", config=self.BASE_CONFIG)
 
         self.assertTrue(result.startswith("Goal:"))
@@ -163,7 +172,9 @@ class ContextRecapTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response(VALID_JSON)
 
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             generate_commit_summary_result("diff --git a/x b/x", context_recap=VALID_RECAP)
 
         prompt_text = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
@@ -173,7 +184,11 @@ class ContextRecapTests(unittest.TestCase):
     def _patch_anthropic(self, response_text: str):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response(response_text)
-        return patch("cartero.llm.Anthropic", return_value=mock_client)
+        return patch.multiple(
+            "cartero.llm",
+            Anthropic=MagicMock(return_value=mock_client),
+            os=MagicMock(getenv=MagicMock(return_value="unit-test-key")),
+        )
 
 
 class TruncationTests(unittest.TestCase):
@@ -240,7 +255,11 @@ class TruncationTests(unittest.TestCase):
     def _patch_anthropic(self, response_text: str):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response(response_text)
-        return patch("cartero.llm.Anthropic", return_value=mock_client)
+        return patch.multiple(
+            "cartero.llm",
+            Anthropic=MagicMock(return_value=mock_client),
+            os=MagicMock(getenv=MagicMock(return_value="unit-test-key")),
+        )
 
 
 class RetryTests(unittest.TestCase):
@@ -254,7 +273,9 @@ class RetryTests(unittest.TestCase):
             _make_llm_response("not valid json {{{"),
             _make_llm_response(VALID_JSON),
         ]
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             result = generate_summary_from_diff("some diff", config=self.BASE_CONFIG)
 
         self.assertIn("summary:", result)
@@ -266,7 +287,9 @@ class RetryTests(unittest.TestCase):
             _make_llm_response("not valid json"),
             _make_llm_response(VALID_JSON),
         ]
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             generate_summary_from_diff("some diff", config=self.BASE_CONFIG)
 
         first_call_system = mock_client.messages.create.call_args_list[0].kwargs["system"]
@@ -279,7 +302,9 @@ class RetryTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_llm_response("bad json {{{")
 
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             with self.assertRaises(LLMCallError) as ctx:
                 generate_summary_from_diff("some diff", config=self.BASE_CONFIG)
 
@@ -292,7 +317,9 @@ class RetryTests(unittest.TestCase):
             _make_llm_response(""),
             _make_llm_response(VALID_JSON),
         ]
-        with patch("cartero.llm.Anthropic", return_value=mock_client):
+        with patch("cartero.llm.os.getenv", return_value="unit-test-key"), patch(
+            "cartero.llm.Anthropic", return_value=mock_client
+        ):
             result = generate_summary_from_diff("some diff", config=self.BASE_CONFIG)
 
         self.assertIn("summary:", result)
@@ -311,8 +338,30 @@ class ValidationTests(unittest.TestCase):
 
     def test_raises_llm_config_error_without_api_key(self) -> None:
         with patch("cartero.llm.os.getenv", return_value=None):
-            with self.assertRaises(LLMConfigError):
+            with self.assertRaises(LLMConfigError) as ctx:
                 generate_summary_from_diff("some diff")
+        self.assertIn("ANTHROPIC_API_KEY is not configured", str(ctx.exception))
+
+    def test_anthropic_client_requires_explicit_api_key_without_fallback(self) -> None:
+        with patch("cartero.llm.os.getenv", return_value=None) as mock_getenv, patch(
+            "cartero.llm.Anthropic"
+        ) as mock_anthropic:
+            with self.assertRaises(LLMConfigError) as ctx:
+                llm_module._get_client(CarteroConfig(llm_provider="anthropic"))
+
+        mock_getenv.assert_called_once_with("ANTHROPIC_API_KEY")
+        mock_anthropic.assert_not_called()
+        self.assertIn("ANTHROPIC_API_KEY is not configured", str(ctx.exception))
+
+    def test_anthropic_client_rejects_empty_api_key(self) -> None:
+        with patch("cartero.llm.os.getenv", return_value="   "), patch(
+            "cartero.llm.Anthropic"
+        ) as mock_anthropic:
+            with self.assertRaises(LLMConfigError) as ctx:
+                llm_module._get_client(CarteroConfig(llm_provider="anthropic"))
+
+        mock_anthropic.assert_not_called()
+        self.assertIn("ANTHROPIC_API_KEY is not configured", str(ctx.exception))
 
     def test_raises_llm_config_error_for_unknown_provider(self) -> None:
         bad_config = CarteroConfig(llm_provider="openai")

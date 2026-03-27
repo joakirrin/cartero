@@ -386,17 +386,17 @@ def _parse_context_recap(output: str) -> str:
 
 def _get_client(config: CarteroConfig):
     if config.llm_provider == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY", "test-key")
-        if not api_key:
-            raise LLMConfigError("ANTHROPIC_API_KEY environment variable is not set")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key or not api_key.strip():
+            raise LLMConfigError("ANTHROPIC_API_KEY is not configured")
         if Anthropic is None:
             raise LLMConfigError("anthropic package is not installed")
         return Anthropic(api_key=api_key)
 
     if config.llm_provider == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY", "test-key")
-        if not api_key:
-            raise LLMConfigError("GEMINI_API_KEY environment variable is not set")
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key or not api_key.strip():
+            raise LLMConfigError("GEMINI_API_KEY is not configured")
         if genai is None:
             raise LLMConfigError("google-generativeai package is not installed")
         genai.configure(api_key=api_key)

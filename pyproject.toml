@@ -20,3 +20,12 @@ cartero-web = "cartero.web:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0"]
+
+[tool.setuptools.packages.find]
+include = ["cartero*"]
+exclude = ["context*", "tests*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require live LLM/provider access",
+]

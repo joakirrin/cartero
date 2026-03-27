@@ -44,3 +44,20 @@ Cartero is evolving from a commit tool into a full system for turning code into 
 * Every code change becomes instantly understandable
 * Every update is ready to share with users
 * The gap between building and communicating software disappears
+
+---
+
+## Local LLM Setup
+
+Cartero uses Anthropic by default for live LLM generation.
+
+Set `ANTHROPIC_API_KEY` in your shell before running live generation or integration tests:
+
+```bash
+export ANTHROPIC_API_KEY=your_key_here
+```
+
+To persist it in `zsh`, add the same line to `~/.zshrc` and reload your shell.
+
+Integration tests marked with `integration` skip when `ANTHROPIC_API_KEY` is not configured.
+Missing credentials now fail fast with a configuration error instead of falling back to a fake key.
