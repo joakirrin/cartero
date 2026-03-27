@@ -7,7 +7,12 @@ name = "cartero"
 version = "0.1.0"
 description = "Convert structured YAML summaries into repo-scoped change plans."
 requires-python = ">=3.11"
-dependencies = ["Flask>=3.1,<4", "PyYAML>=6.0,<7", "rich>=13.0"]
+dependencies = [
+    "Flask>=3.1,<4",
+    "PyYAML>=6.0,<7",
+    "rich>=13.0",
+    "anthropic",
+]
 
 [project.scripts]
 cartero = "cartero.cli:main"
