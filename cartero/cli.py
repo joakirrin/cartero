@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -10,6 +11,8 @@ from rich.panel import Panel
 from rich.text import Text
 
 from cartero.executor import execute_actions
+from cartero.generator import generate_summary_result_from_diff
+from cartero.llm import LLMCallError, LLMConfigError
 from cartero.parser import ParseError, load_summary
 from cartero.simulator import SimulatedAction, simulate_actions
 from cartero.validator import ALLOWED_REPOS, Change, ValidationError, validate_summary
@@ -25,9 +28,16 @@ ACTION_STYLES = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cartero",
-        description="Validate an actions YAML file and print a dry-run repo plan.",
+        description="Validate Cartero summaries or generate them from a diff.",
     )
-    mode_group = parser.add_mutually_exclusive_group()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        prog="cartero",
+        help="Validate an actions YAML file and print a repo plan.",
+    )
+    mode_group = run_parser.add_mutually_exclusive_group()
     mode_group.add_argument(
         "--dry-run",
         action="store_true",
@@ -38,25 +48,54 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Apply the changes described in the summary file.",
     )
-    parser.add_argument("summary", help="Path to the YAML summary file.")
+    run_parser.add_argument("summary", help="Path to the YAML summary file.")
+    run_parser.set_defaults(handler=handle_run)
+
+    generate_parser = subparsers.add_parser(
+        "generate",
+        prog="cartero generate",
+        help="Generate a Cartero YAML summary from a diff.",
+    )
+    generate_parser.add_argument(
+        "--diff-file",
+        metavar="PATH",
+        help="Path to a file containing the diff. Reads from stdin when omitted.",
+    )
+    generate_parser.set_defaults(handler=handle_generate)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = build_parser().parse_args(_normalize_argv(argv))
     console = Console()
     error_console = Console(stderr=True)
-    mode = "apply" if args.apply else "dry-run"
-    # Explicitly ignore args.dry_run because default mode is already dry-run.
+    return args.handler(args, console, error_console)
 
+
+def handle_run(args: argparse.Namespace, console: Console, error_console: Console) -> int:
+    mode = "apply" if args.apply else "dry-run"
     try:
         raw_summary = load_summary(args.summary)
         summary = validate_summary(raw_summary)
     except (ParseError, ValidationError) as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
-
     render_plan(Path(args.summary), summary.actions, mode, console=console)
+    return 0
+
+
+def handle_generate(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    try:
+        diff_text = _read_diff_text(args.diff_file)
+        result = generate_summary_result_from_diff(diff_text)
+    except (LLMConfigError, LLMCallError, ValueError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+    if result.warning_message:
+        error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
+    console.print(result.yaml_text, markup=False, end="")
     return 0
 
 
@@ -119,6 +158,19 @@ def _describe_mode(mode: str) -> str:
     if mode == "apply":
         return "apply"
     return "dry-run"
+
+
+def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"run", "generate"}:
+        return args
+    return ["run", *args]
+
+
+def _read_diff_text(diff_file: str | None) -> str:
+    if diff_file is None:
+        return sys.stdin.read()
+    return Path(diff_file).read_text(encoding="utf-8")
 
 
 def _build_status_line() -> Text:

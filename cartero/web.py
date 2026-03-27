@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 from rich.console import Console
 
 from cartero.cli import render_plan
+from cartero.generator import generate_summary_result_from_diff
+from cartero.llm import LLMCallError, LLMConfigError
 from cartero.parser import ParseError, StrictLoader
 from cartero.validator import ValidationError, validate_summary
 
@@ -77,6 +79,20 @@ def create_app() -> Flask:
             sample_yaml=SAMPLE_SUMMARY_YAML,
             output_filename=_build_output_filename(action),
         )
+
+    @app.post("/generate")
+    def generate() -> tuple[Any, int]:
+        diff_text = request.form.get("diff_text", "")
+        try:
+            result = generate_summary_result_from_diff(diff_text)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (LLMConfigError, LLMCallError) as exc:
+            return jsonify({"error": str(exc)}), 500
+        payload = {"yaml": result.yaml_text}
+        if result.warning_message:
+            payload["warning"] = result.warning_message
+        return jsonify(payload), 200
 
     return app
 
