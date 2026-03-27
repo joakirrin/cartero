@@ -1,0 +1,21 @@
+diff --git a/cartero/renderers/changelog.py b/cartero/renderers/changelog.py
+index 1111111..2222222 100644
+--- a/cartero/renderers/changelog.py
++++ b/cartero/renderers/changelog.py
+@@ -10,6 +10,8 @@
+ def render_changelog(record):
+     title = record["title"]
+     summary = record["summary"]
++    scope_limits = record.get("scope_limits")
+     return title + "\n\n" + summary
+
+diff --git a/cartero/parser.py b/cartero/parser.py
+index 3333333..4444444 100644
+--- a/cartero/parser.py
++++ b/cartero/parser.py
+@@ -30,6 +30,8 @@
+ REQUIRED_FIELDS = [
+     "title",
+     "summary",
++    "scope_limits",
+ ]

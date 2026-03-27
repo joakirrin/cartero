@@ -1,0 +1,41 @@
+diff --git a/cartero/parser.py b/cartero/parser.py
+index 1111111..2222222 100644
+--- a/cartero/parser.py
++++ b/cartero/parser.py
+@@ -10,6 +10,8 @@
+ REQUIRED_FIELDS = ["title", "summary", "scope_limits"]
+
+diff --git a/cartero/validator.py b/cartero/validator.py
+index 3333333..4444444 100644
+--- a/cartero/validator.py
++++ b/cartero/validator.py
+@@ -20,6 +20,8 @@
+ def validate_required_fields(...):
+
+diff --git a/cartero/prompting.py b/cartero/prompting.py
+index 5555555..6666666 100644
+--- a/cartero/prompting.py
++++ b/cartero/prompting.py
+@@ -30,6 +30,8 @@
+ PROMPT_FORMAT = "plain_text_delimiters"
+
+diff --git a/cartero/renderers/changelog.py b/cartero/renderers/changelog.py
+index 7777777..8888888 100644
+--- a/cartero/renderers/changelog.py
++++ b/cartero/renderers/changelog.py
+@@ -40,6 +40,8 @@
+ def render_changelog(...):
+
+diff --git a/cartero/renderers/faq.py b/cartero/renderers/faq.py
+index 9999999..aaaaaaa 100644
+--- a/cartero/renderers/faq.py
++++ b/cartero/renderers/faq.py
+@@ -40,6 +40,8 @@
+ def render_faq(...):
+
+diff --git a/cartero/renderers/kb.py b/cartero/renderers/kb.py
+index bbbbbbb..ccccccc 100644
+--- a/cartero/renderers/kb.py
++++ b/cartero/renderers/kb.py
+@@ -40,6 +40,8 @@
+ def render_kb(...):

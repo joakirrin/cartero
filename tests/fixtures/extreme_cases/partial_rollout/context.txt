@@ -1,0 +1,2 @@
+Intent discussed: unify all output surfaces around the same canonical structure.
+This session only updated parser and changelog support.
