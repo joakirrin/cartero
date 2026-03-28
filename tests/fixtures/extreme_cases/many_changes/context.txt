@@ -1,0 +1,1 @@
+Goal: consolidate documentation generation around one canonical record.

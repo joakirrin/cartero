@@ -12,7 +12,11 @@ from rich.panel import Panel
 from rich.text import Text
 
 from cartero.executor import execute_actions
-from cartero.generator import generate_context_recap, generate_summary_result_from_diff
+from cartero.generator import (
+    SummaryGenerationResult,
+    generate_context_recap,
+    generate_summary_result_from_diff,
+)
 from cartero.git import (
     GitError,
     commit as git_commit,
@@ -31,6 +35,23 @@ ACTION_STYLES = {
     "delete": "red",
     "mkdir": "yellow",
 }
+INTERACTIVE_MAIN_OPTIONS = (
+    ("1", "Explain my changes"),
+    ("2", "Generate summary"),
+    ("3", "Generate full update"),
+    ("4", "Commit changes"),
+    ("5", "Exit"),
+)
+INTERACTIVE_CONTEXT_OPTIONS = (
+    ("1", "No"),
+    ("2", "Paste notes now"),
+    ("3", "Use a context file"),
+)
+INTERACTIVE_NEXT_OPTIONS = (
+    ("1", "Commit"),
+    ("2", "Regenerate"),
+    ("3", "Exit"),
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -109,9 +130,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(_normalize_argv(argv))
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     console = Console()
     error_console = Console(stderr=True)
+    if not raw_args:
+        return handle_interactive(console, error_console)
+    args = build_parser().parse_args(_normalize_argv(raw_args))
     return args.handler(args, console, error_console)
 
 
@@ -133,18 +157,25 @@ def handle_generate(
     try:
         diff_text = _resolve_generate_diff(args)
         raw_context = _read_optional_text_input(_get_arg_value(args, "context_file"))
-        result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
     except NoDiffError as exc:
         console.print(str(exc))
         return 0
     except GitError as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
-    except (LLMConfigError, LLMCallError, ValueError) as exc:
+    except ValueError as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
-    if result.warning_message:
-        error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
+
+    exit_code, result = _generate_summary_result(
+        diff_text,
+        raw_context,
+        console=console,
+        error_console=error_console,
+    )
+    if exit_code != 0 or result is None:
+        return exit_code
+
     console.print(result.yaml_text, markup=False, end="")
     return 0
 
@@ -165,6 +196,89 @@ def handle_context(
 def handle_commit(
     args: argparse.Namespace, console: Console, error_console: Console
 ) -> int:
+    return _run_commit_flow(
+        console,
+        error_console,
+        context_file=_get_arg_value(args, "context_file"),
+    )
+
+
+def handle_interactive(console: Console, error_console: Console) -> int:
+    try:
+        changed_files = get_changed_files()
+        diff_text = get_diff()
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    while True:
+        _print_interactive_change_summary(changed_files, diff_text, console)
+
+        action = _prompt_choice(
+            console,
+            "What do you want to do?",
+            INTERACTIVE_MAIN_OPTIONS,
+        )
+        if action is None or action == "5":
+            return 0
+
+        if action == "4":
+            raw_context = _capture_interactive_context(console, error_console)
+            return _run_commit_flow(
+                console,
+                error_console,
+                raw_context=raw_context,
+            )
+
+        raw_context: str | None = None
+        context_prompted = False
+
+        if action in {"1", "2"}:
+            raw_context = _capture_interactive_context(console, error_console)
+            context_prompted = True
+            exit_code = _run_interactive_generation_action(
+                action,
+                diff_text,
+                raw_context,
+                console=console,
+                error_console=error_console,
+            )
+            if exit_code != 0:
+                return exit_code
+        else:
+            console.print("Full update is not implemented yet.")
+
+        next_action = _prompt_choice(
+            console,
+            "What next?",
+            INTERACTIVE_NEXT_OPTIONS,
+        )
+        if next_action is None or next_action == "3":
+            return 0
+        if next_action == "2":
+            try:
+                changed_files = get_changed_files()
+                diff_text = get_diff()
+            except GitError as exc:
+                error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+                return 2
+            continue
+        if not context_prompted:
+            raw_context = _capture_interactive_context(console, error_console)
+        return _run_commit_flow(
+            console,
+            error_console,
+            raw_context=raw_context,
+        )
+
+
+def _run_commit_flow(
+    console: Console,
+    error_console: Console,
+    *,
+    raw_context: str | None = None,
+    context_file: object | None = None,
+) -> int:
     try:
         changed_files = get_changed_files()
     except GitError as exc:
@@ -181,32 +295,10 @@ def handle_commit(
 
     console.print('Stage files (numbers separated by spaces, or "a" for all): ', end="")
     selection = input().strip()
-
-    if not selection:
+    selected_paths = _parse_selected_paths(selection, changed_files)
+    if selected_paths is None:
         error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
         return 2
-
-    if selection.lower() in {"a", "all"}:
-        selected_paths = changed_files
-    else:
-        selected_paths: list[str] = []
-        seen_indexes: set[int] = set()
-        try:
-            for token in selection.split():
-                selected_index = int(token)
-                if selected_index < 1 or selected_index > len(changed_files):
-                    raise ValueError
-                if selected_index in seen_indexes:
-                    continue
-                seen_indexes.add(selected_index)
-                selected_paths.append(changed_files[selected_index - 1])
-        except ValueError:
-            error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
-            return 2
-
-        if not selected_paths:
-            error_console.print(Text.assemble(("error: ", "red"), ("Invalid file selection",)))
-            return 2
 
     try:
         stage_files(selected_paths)
@@ -221,15 +313,21 @@ def handle_commit(
         return 2
 
     try:
-        raw_context = _read_optional_text_input(_get_arg_value(args, "context_file"))
+        if raw_context is None:
+            raw_context = _read_optional_text_input(_coerce_optional_str(context_file))
         with console.status("Generating commit summary…"):
-            result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
-    except (LLMConfigError, LLMCallError, ValueError) as exc:
+            exit_code, result = _generate_summary_result(
+                diff_text,
+                raw_context,
+                console=console,
+                error_console=error_console,
+            )
+    except ValueError as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
 
-    if result.warning_message:
-        error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
+    if exit_code != 0 or result is None:
+        return exit_code
 
     console.print(result.yaml_text, markup=False)
     console.print("Commit with this summary? [y/N]: ", end="")
@@ -370,6 +468,188 @@ def _get_arg_value(args: argparse.Namespace, name: str) -> object | None:
     return vars(args).get(name)
 
 
+def _generate_summary_result(
+    diff_text: str,
+    raw_context: str | None,
+    *,
+    console: Console,
+    error_console: Console,
+) -> tuple[int, SummaryGenerationResult | None]:
+    try:
+        result = generate_summary_result_from_diff(diff_text, raw_context=raw_context)
+    except (LLMConfigError, LLMCallError, ValueError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2, None
+
+    if result.warning_message:
+        error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
+
+    return 0, result
+
+
+def _print_interactive_change_summary(
+    changed_files: Sequence[str],
+    diff_text: str,
+    console: Console,
+) -> None:
+    if not changed_files:
+        console.print("No git changes detected.")
+        return
+
+    label = "file" if len(changed_files) == 1 else "files"
+    console.print(f"I found changes in {len(changed_files)} {label}.")
+    for path in changed_files[:5]:
+        console.print(f"- {path}")
+    if len(changed_files) > 5:
+        console.print(f"- ... {len(changed_files) - 5} more")
+    if not diff_text.strip():
+        console.print("There is no diff to summarize yet. New files may need staging first.")
+
+
+def _run_interactive_generation_action(
+    action: str,
+    diff_text: str,
+    raw_context: str | None,
+    *,
+    console: Console,
+    error_console: Console,
+) -> int:
+    if not diff_text.strip():
+        console.print("No changes detected. You can paste a diff or make changes first.")
+        return 0
+
+    exit_code, result = _generate_summary_result(
+        diff_text,
+        raw_context,
+        console=console,
+        error_console=error_console,
+    )
+    if exit_code != 0 or result is None:
+        return exit_code
+
+    if action == "1":
+        _print_explanation(result.yaml_text, console)
+        return 0
+
+    console.print(result.yaml_text, markup=False, end="")
+    return 0
+
+
+def _print_explanation(yaml_text: str, console: Console) -> None:
+    console.print("Explanation:")
+    try:
+        data = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        console.print(yaml_text, markup=False, end="")
+        return
+
+    if not isinstance(data, dict):
+        console.print(yaml_text, markup=False, end="")
+        return
+
+    summary = str(data.get("summary", "")).strip()
+    reason = str(data.get("reason", "")).strip()
+    impact = str(data.get("impact", "")).strip()
+
+    if summary:
+        console.print(summary)
+    if reason:
+        console.print(f"Why: {reason}")
+    if impact:
+        console.print(f"Impact: {impact}")
+
+
+def _capture_interactive_context(console: Console, error_console: Console) -> str | None:
+    while True:
+        choice = _prompt_choice(
+            console,
+            "Add context?",
+            INTERACTIVE_CONTEXT_OPTIONS,
+        )
+        if choice is None or choice == "1":
+            return None
+        if choice == "2":
+            return _read_pasted_context(console)
+
+        console.print("Context file path: ", end="")
+        path = input().strip()
+        if not path:
+            error_console.print(Text.assemble(("error: ", "red"), ("Invalid context file",)))
+            continue
+        try:
+            return _read_text_input(path)
+        except ValueError as exc:
+            error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+
+
+def _read_pasted_context(console: Console) -> str | None:
+    console.print("Paste notes. Finish with a line that only says END.")
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "END":
+            break
+        lines.append(line)
+
+    content = "\n".join(lines).strip()
+    return content or None
+
+
+def _prompt_choice(
+    console: Console,
+    prompt: str,
+    options: Sequence[tuple[str, str]],
+) -> str | None:
+    option_map = dict(options)
+    while True:
+        console.print(prompt)
+        for key, label in options:
+            console.print(f"{key}. {label}")
+        console.print("> ", end="")
+        try:
+            choice = input().strip()
+        except EOFError:
+            return None
+        if choice in option_map:
+            return choice
+        console.print("Choose a number from the list.")
+
+
+def _parse_selected_paths(selection: str, changed_files: Sequence[str]) -> list[str] | None:
+    if not selection:
+        return None
+
+    if selection.lower() in {"a", "all"}:
+        return list(changed_files)
+
+    selected_paths: list[str] = []
+    seen_indexes: set[int] = set()
+    try:
+        for token in selection.split():
+            selected_index = int(token)
+            if selected_index < 1 or selected_index > len(changed_files):
+                raise ValueError
+            if selected_index in seen_indexes:
+                continue
+            seen_indexes.add(selected_index)
+            selected_paths.append(changed_files[selected_index - 1])
+    except ValueError:
+        return None
+
+    if not selected_paths:
+        return None
+    return selected_paths
+
+
+def _coerce_optional_str(value: object | None) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    return str(value)
+
+
 class NoDiffError(ValueError):
     pass
 
@@ -396,3 +676,7 @@ def _get_action_type(simulated_action: SimulatedAction) -> str:
     if simulated_action.summary.startswith("simulate mkdir "):
         return "mkdir"
     raise ValueError(f"Unsupported simulated action summary: {simulated_action.summary}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
