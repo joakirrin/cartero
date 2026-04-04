@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,7 @@ try:
 except ImportError:
     genai = None
 
+from cartero.canonical import CanonicalRecord, CanonicalRecordError, parse_canonical_record
 from cartero.config import CarteroConfig, default_config
 
 
@@ -43,12 +45,23 @@ with this exact shape:
 }
 
 Rules:
-- summary must describe the change from the user's perspective, not the
-  developer's. Write it like a release note: what can Cartero do now?
-- reason must explain the user-facing problem that existed before,
-  not the technical cause.
-- impact must describe a concrete, observable outcome. Avoid vague
-  phrases like "improves performance" or "enhances reliability".
+- summary must be exactly one sentence, start with "Cartero", and stay
+  short. Target 140 characters or fewer.
+- reason is required and must be exactly one sentence explaining the
+  user-facing problem that existed before the change. It must never be empty.
+- impact is required and must be exactly one sentence describing the
+  concrete observable outcome for a human using Cartero. Keep it short.
+- summary, reason, and impact must stay product-style and understandable
+  to a non-developer.
+- do not use bullets, numbered lists, or multiline blocks in summary,
+  reason, or impact.
+- do not mention module names, function names, class names, file paths,
+  or implementation details in summary, reason, or impact unless that
+  identifier is absolutely required for a human to understand the change.
+- if the diff is broad, noisy, or highly technical, abstract toward the
+  single most important human outcome instead of trying to document every
+  internal change.
+- do not repeat the same sentence across summary, reason, and impact.
 - If the input includes a "Structured context recap" section, use it to
   understand intent, audience framing, tradeoffs, and why the change
   matters. Use the git diff as the source of truth for what changed.
@@ -195,6 +208,83 @@ CONTEXT_RECAP_HEADERS = (
     "Explanation for non-technical users:",
 )
 
+CANONICAL_RECORD_SYSTEM_PROMPT = """You are Cartero's canonical communication record generator.
+
+Given a git diff and optional structured context recap, return ONLY one valid
+CARTERO_RECORD_V1 plain-text record using the exact delimiters and block order below.
+
+Required structure:
+
+<<<CARTERO_RECORD_V1>>>
+<<<SUMMARY>>>
+<1-3 sentences. Must start with "Cartero".>
+<<<END_SUMMARY>>>
+<<<CHANGELOG>>>
+<product-style changelog text in English. Paragraphs and bullet points are allowed.>
+<<<END_CHANGELOG>>>
+<<<FAQ>>>
+<NONE or one or more valid FAQ items>
+<<<END_FAQ>>>
+<<<KNOWLEDGE_BASE>>>
+<NONE or one or more valid KB items>
+<<<END_KNOWLEDGE_BASE>>>
+<<<END_CARTERO_RECORD_V1>>>
+
+FAQ item format:
+<<<FAQ_ITEM>>>
+Q:
+<question in English>
+A:
+<answer in English>
+<<<END_FAQ_ITEM>>>
+
+Knowledge base item format:
+<<<KB_ITEM>>>
+TITLE:
+<title in English>
+BODY:
+<body in English>
+<<<END_KB_ITEM>>>
+
+Rules:
+- Return only the canonical record. No markdown fences, no preamble, no trailing text.
+- All content must be in English.
+- Use exact delimiters with no extra spaces.
+- SUMMARY and CHANGELOG are required and must not be empty.
+- FAQ and KNOWLEDGE_BASE must be either NONE or valid items.
+- Do not include ACTIONS, executable steps, file paths, code identifiers, or JSON.
+- The git diff is the source of truth for what changed.
+- Structured context recap can add intent, but must never contradict the diff.
+- Use product release note style.
+- SUMMARY must start with "Cartero".
+- Do not use git verbs such as fix, refactor, chore, update, or patch.
+- Do not include delimiter text inside content.
+- If FAQ or KNOWLEDGE_BASE have no safe content, use NONE.
+"""
+
+CANONICAL_RECORD_RETRY_SUFFIX = """
+IMPORTANT: Your previous response did not match the required canonical format.
+Return ONLY one valid CARTERO_RECORD_V1 record with the exact delimiters,
+exact block order, and no extra text. Do not return JSON. Do not return ACTIONS.
+If FAQ or KNOWLEDGE_BASE have no safe content, return NONE for those blocks.
+"""
+
+COMMIT_BRIDGE_CANONICAL_GUIDANCE = """
+Additional quality requirements for commit-summary bridging:
+- SUMMARY must be exactly one sentence, start with "Cartero", and target 140 characters or fewer.
+- SUMMARY must describe the most important human-visible improvement, not an implementation detail.
+- CHANGELOG must stay concise and product-style. Prefer one short paragraph or at most 2 short bullets.
+- Do not list internal implementation steps, diagnostics, or technical inventories.
+- Do not mention module names, function names, class names, or file paths unless essential.
+- If the diff is broad or technical, summarize only the most important human outcome.
+"""
+
+COMMIT_BRIDGE_QUALITY_RETRY_GUIDANCE = """
+IMPORTANT: Your previous response was structurally valid but not concise enough for commit-summary bridging.
+Retry with a shorter SUMMARY and a more concise CHANGELOG focused on the most important human outcome.
+Do not include internal implementation details, technical inventories, or repeated phrasing.
+"""
+
 
 class LLMConfigError(Exception):
     pass
@@ -207,6 +297,14 @@ class LLMCallError(Exception):
 @dataclass(frozen=True)
 class LLMGenerationResult:
     yaml_text: str
+    was_chunked: bool
+    canonical_text: str | None = None
+
+
+@dataclass(frozen=True)
+class CanonicalLLMGenerationResult:
+    canonical_text: str
+    record: CanonicalRecord
     was_chunked: bool
 
 
@@ -308,6 +406,358 @@ def _build_commit_generation_input(
         f"{context_recap}\n\n"
         "Git diff:\n"
         f"{diff_text}"
+    )
+
+
+def _render_canonical_record(record: CanonicalRecord) -> str:
+    return "\n".join(
+        [
+            "<<<CARTERO_RECORD_V1>>>",
+            "<<<SUMMARY>>>",
+            record.summary,
+            "<<<END_SUMMARY>>>",
+            "<<<CHANGELOG>>>",
+            record.changelog,
+            "<<<END_CHANGELOG>>>",
+            "<<<FAQ>>>",
+            _render_faq_block(record),
+            "<<<END_FAQ>>>",
+            "<<<KNOWLEDGE_BASE>>>",
+            _render_knowledge_base_block(record),
+            "<<<END_KNOWLEDGE_BASE>>>",
+            "<<<END_CARTERO_RECORD_V1>>>",
+        ]
+    )
+
+
+def _render_faq_block(record: CanonicalRecord) -> str:
+    if not record.faq_items:
+        return "NONE"
+
+    lines: list[str] = []
+    for item in record.faq_items:
+        lines.extend(
+            [
+                "<<<FAQ_ITEM>>>",
+                "Q:",
+                item.question,
+                "A:",
+                item.answer,
+                "<<<END_FAQ_ITEM>>>",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _render_knowledge_base_block(record: CanonicalRecord) -> str:
+    if not record.knowledge_base_items:
+        return "NONE"
+
+    lines: list[str] = []
+    for item in record.knowledge_base_items:
+        lines.extend(
+            [
+                "<<<KB_ITEM>>>",
+                "TITLE:",
+                item.title,
+                "BODY:",
+                item.body,
+                "<<<END_KB_ITEM>>>",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _parse_canonical_output(output: str) -> tuple[str, CanonicalRecord]:
+    canonical_text = _strip_fences(output)
+    if not canonical_text:
+        raise LLMCallError("Model returned empty output")
+
+    try:
+        record = parse_canonical_record(canonical_text)
+    except CanonicalRecordError as exc:
+        raise LLMCallError(
+            f"Model returned an invalid canonical record: {exc}\nRaw output:\n{canonical_text}"
+        ) from exc
+
+    return canonical_text, record
+
+
+def _merge_canonical_records(records: list[CanonicalRecord]) -> CanonicalRecord:
+    if not records:
+        raise LLMCallError("No canonical records were available to merge.")
+
+    first_summary = records[0].summary
+    if any(record.summary != first_summary for record in records[1:]):
+        logger.warning(
+            "Chunked canonical generation returned multiple summaries. "
+            "Keeping the first summary and merging the remaining blocks."
+        )
+
+    merged_changelog = "\n\n".join(
+        record.changelog.strip()
+        for record in records
+        if record.changelog.strip()
+    )
+    faq_items = tuple(
+        item
+        for record in records
+        for item in record.faq_items
+    )
+    knowledge_base_items = tuple(
+        item
+        for record in records
+        for item in record.knowledge_base_items
+    )
+
+    merged_record = CanonicalRecord(
+        summary=first_summary,
+        changelog=merged_changelog,
+        faq_items=faq_items,
+        knowledge_base_items=knowledge_base_items,
+    )
+
+    # Re-parse the rendered text to ensure the merged output still satisfies
+    # the same contract we accept from the model.
+    parse_canonical_record(_render_canonical_record(merged_record))
+    return merged_record
+
+
+def _canonical_record_to_legacy_yaml(record: CanonicalRecord) -> str:
+    """Temporary bridge while downstream CLI/web paths still expect YAML."""
+    return _canonical_record_to_legacy_yaml_with_context(record, context_recap=None)
+
+
+def _canonical_record_to_legacy_yaml_with_context(
+    record: CanonicalRecord,
+    *,
+    context_recap: str | None,
+) -> str:
+    compatibility_payload = _build_legacy_summary_payload(
+        record,
+        context_recap=context_recap,
+    )
+    _validate_legacy_summary_payload(compatibility_payload)
+    yaml_output = yaml.dump(
+        compatibility_payload,
+        Dumper=CarteroDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+        width=88,
+    )
+    try:
+        yaml.safe_load(yaml_output)
+    except yaml.YAMLError as exc:
+        raise LLMCallError(f"Generated YAML could not be parsed: {exc}") from exc
+    return yaml_output
+
+
+def render_legacy_yaml_bridge(
+    record: CanonicalRecord,
+    *,
+    context_recap: str | None = None,
+) -> str:
+    """Temporary public bridge while callers migrate away from YAML."""
+
+    return _canonical_record_to_legacy_yaml_with_context(
+        record,
+        context_recap=context_recap,
+    )
+
+
+def _build_legacy_summary_payload(
+    record: CanonicalRecord,
+    *,
+    context_recap: str | None,
+) -> dict[str, object]:
+    summary = _normalize_commit_field(record.summary, max_chars=140)
+    recap_sections = _parse_context_recap_sections(context_recap)
+    reason_source = (
+        recap_sections.get("User problem")
+        or recap_sections.get("Explanation for non-technical users")
+        or "Before this change, the workflow was less clear for users."
+    )
+    impact_source = (
+        recap_sections.get("Expected user-visible outcome")
+        or _first_commit_sentence(record.changelog)
+        or summary
+    )
+    reason = _normalize_commit_field(reason_source, max_chars=180)
+    impact = _normalize_commit_field(impact_source, max_chars=180)
+    return {
+        "summary": summary,
+        "reason": reason,
+        "impact": impact,
+        "actions": [],
+    }
+
+
+def _parse_context_recap_sections(context_recap: str | None) -> dict[str, str]:
+    if not context_recap:
+        return {}
+
+    sections: dict[str, list[str]] = {}
+    current_header: str | None = None
+    known_headers = {header[:-1]: header for header in CONTEXT_RECAP_HEADERS}
+
+    for raw_line in context_recap.splitlines():
+        stripped = raw_line.strip()
+        matched_header = next(
+            (header_name for header_name, header in known_headers.items() if stripped.startswith(header)),
+            None,
+        )
+        if matched_header is not None:
+            current_header = matched_header
+            remainder = stripped.split(":", 1)[1].strip()
+            sections[current_header] = [remainder] if remainder else []
+            continue
+        if current_header is not None and stripped:
+            sections[current_header].append(stripped)
+
+    return {
+        header: _normalize_commit_field(" ".join(lines), max_chars=220)
+        for header, lines in sections.items()
+        if lines
+    }
+
+
+def _first_commit_sentence(text: str) -> str:
+    cleaned = _clean_commit_text(text)
+    if not cleaned:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    return parts[0].strip()
+
+
+def _clean_commit_text(text: str) -> str:
+    cleaned_lines: list[str] = []
+    for raw_line in _strip_fences(text).replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("- ", "* ", "• ")):
+            line = line[2:].strip()
+        cleaned_lines.append(line.replace("`", ""))
+    return " ".join(" ".join(cleaned_lines).split())
+
+
+def _normalize_commit_field(text: str, *, max_chars: int) -> str:
+    cleaned = _clean_commit_text(text)
+    if not cleaned:
+        return ""
+    first_sentence = _first_commit_sentence(cleaned)
+    candidate = first_sentence or cleaned
+    if len(candidate) <= max_chars:
+        return candidate
+    truncated = candidate[: max_chars - 3].rsplit(" ", 1)[0].rstrip(" ,;:")
+    if not truncated:
+        truncated = candidate[: max_chars - 3].rstrip(" ,;:")
+    return f"{truncated}..."
+
+
+def _validate_legacy_summary_payload(payload: dict[str, object]) -> None:
+    summary = str(payload.get("summary", "")).strip()
+    reason = str(payload.get("reason", "")).strip()
+    impact = str(payload.get("impact", "")).strip()
+
+    if not summary.startswith("Cartero"):
+        raise LLMCallError("Commit summary quality check failed: summary must start with 'Cartero'")
+    if _contains_commit_bullets_or_newlines(summary):
+        raise LLMCallError("Commit summary quality check failed: summary must be a single short sentence")
+    if len(summary) > 160:
+        raise LLMCallError("Commit summary quality check failed: summary is too long")
+    if not reason:
+        raise LLMCallError("Commit summary quality check failed: reason must not be empty")
+    if _contains_commit_bullets_or_newlines(reason):
+        raise LLMCallError("Commit summary quality check failed: reason must be a single sentence")
+    if len(reason) > 220:
+        raise LLMCallError("Commit summary quality check failed: reason is too long")
+    if not impact:
+        raise LLMCallError("Commit summary quality check failed: impact must not be empty")
+    if _contains_commit_bullets_or_newlines(impact):
+        raise LLMCallError("Commit summary quality check failed: impact must be a single sentence")
+    if len(impact) > 220:
+        raise LLMCallError("Commit summary quality check failed: impact is too long")
+
+
+def _contains_commit_bullets_or_newlines(text: str) -> bool:
+    if "\n" in text:
+        return True
+    stripped = text.lstrip()
+    return stripped.startswith(("- ", "* ", "• "))
+
+
+def validate_commit_bridge_source_record(record: CanonicalRecord) -> None:
+    summary = _clean_commit_text(record.summary)
+    if not summary.startswith("Cartero"):
+        raise LLMCallError(
+            "Commit summary quality check failed: canonical summary must start with 'Cartero'"
+        )
+    if _contains_commit_bullets_or_newlines(record.summary):
+        raise LLMCallError(
+            "Commit summary quality check failed: canonical summary must be a single sentence"
+        )
+    if len(summary) > 160:
+        raise LLMCallError(
+            "Commit summary quality check failed: canonical summary is too long"
+        )
+
+
+def _generate_canonical_record_from_chunks(
+    client,
+    chunks: list[str],
+    config: CarteroConfig,
+    *,
+    system_prompt: str,
+    retry_suffix: str,
+) -> CanonicalLLMGenerationResult:
+    parsed_records: list[CanonicalRecord] = []
+
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        last_error: Exception | None = None
+
+        for attempt in range(1, max(1, config.max_retries) + 1):
+            try:
+                raw_output = _call_llm(
+                    client,
+                    chunk,
+                    config,
+                    system_prompt=system_prompt,
+                    retry_suffix=retry_suffix,
+                    strict=attempt > 1,
+                )
+                logger.debug(
+                    "Raw canonical LLM output for chunk %d (attempt %d):\n%s",
+                    chunk_index,
+                    attempt,
+                    raw_output,
+                )
+                _, record = _parse_canonical_output(raw_output)
+                parsed_records.append(record)
+                break
+            except LLMCallError as exc:
+                last_error = exc
+                logger.warning(
+                    "Canonical chunk %d attempt %d failed: %s",
+                    chunk_index,
+                    attempt,
+                    exc,
+                )
+            except Exception as exc:
+                raise LLMCallError(str(exc)) from exc
+        else:
+            raise LLMCallError(
+                f"Failed for chunk {chunk_index} after "
+                f"{max(1, config.max_retries)} attempts. Last error: {last_error}"
+            )
+
+    merged_record = _merge_canonical_records(parsed_records)
+    canonical_text = _render_canonical_record(merged_record)
+    return CanonicalLLMGenerationResult(
+        canonical_text=canonical_text,
+        record=merged_record,
+        was_chunked=True,
     )
 
 
@@ -549,28 +999,39 @@ def _call_llm(
     raise LLMConfigError(f"Unsupported llm_provider: {config.llm_provider}")
 
 
-def generate_commit_summary_result(
+def generate_canonical_record_result(
     diff_text: str,
     config: CarteroConfig | None = None,
     *,
     context_recap: str | None = None,
-) -> LLMGenerationResult:
+    extra_system_prompt: str = "",
+    extra_retry_suffix: str = "",
+) -> CanonicalLLMGenerationResult:
     active_config = config or default_config
     llm_input = _build_commit_generation_input(diff_text, context_recap=context_recap)
     chunks = _split_diff_into_chunks(llm_input, active_config.max_diff_chars)
     was_chunked = len(chunks) > 1
+    system_prompt = CANONICAL_RECORD_SYSTEM_PROMPT + extra_system_prompt
+    retry_suffix = CANONICAL_RECORD_RETRY_SUFFIX + extra_retry_suffix
 
     if was_chunked:
         logger.warning(
             "Diff was split into %d chunks (max_diff_tokens=%d). "
-            "Processing each chunk separately.",
+            "Processing canonical records per chunk.",
             len(chunks),
             active_config.max_diff_tokens,
         )
+
     client = _get_client(active_config)
     if was_chunked:
-        yaml_text = _generate_from_chunks(client, chunks, active_config)
-        return LLMGenerationResult(yaml_text, was_chunked=True)
+        return _generate_canonical_record_from_chunks(
+            client,
+            chunks,
+            active_config,
+            system_prompt=system_prompt,
+            retry_suffix=retry_suffix,
+        )
+
     last_error: LLMCallError | None = None
     for attempt in range(1, max(1, active_config.max_retries) + 1):
         try:
@@ -578,19 +1039,61 @@ def generate_commit_summary_result(
                 client,
                 llm_input,
                 active_config,
-                system_prompt=COMMIT_SUMMARY_SYSTEM_PROMPT,
-                retry_suffix=STRICT_RETRY_SUFFIX,
+                system_prompt=system_prompt,
+                retry_suffix=retry_suffix,
                 strict=attempt > 1,
             )
-            logger.debug("Raw LLM output (attempt %d):\n%s", attempt, raw_output)
-            return LLMGenerationResult(_parse_and_convert(raw_output), was_chunked)
+            logger.debug("Raw canonical LLM output (attempt %d):\n%s", attempt, raw_output)
+            canonical_text, record = _parse_canonical_output(raw_output)
+            return CanonicalLLMGenerationResult(
+                canonical_text=canonical_text,
+                record=record,
+                was_chunked=False,
+            )
         except LLMCallError as exc:
             last_error = exc
-            logger.warning("LLM attempt %d failed: %s", attempt, exc)
+            logger.warning("Canonical LLM attempt %d failed: %s", attempt, exc)
         except Exception as exc:
             raise LLMCallError(str(exc)) from exc
     raise LLMCallError(
         f"Failed after {max(1, active_config.max_retries)} attempts. Last error: {last_error}"
+    )
+
+
+def generate_canonical_record(
+    diff_text: str,
+    config: CarteroConfig | None = None,
+    *,
+    context_recap: str | None = None,
+) -> str:
+    return generate_canonical_record_result(
+        diff_text,
+        config,
+        context_recap=context_recap,
+    ).canonical_text
+
+
+def generate_commit_summary_result(
+    diff_text: str,
+    config: CarteroConfig | None = None,
+    *,
+    context_recap: str | None = None,
+) -> LLMGenerationResult:
+    # Keep a temporary YAML bridge here so generator/CLI/web can remain stable
+    # while the LLM layer switches its primary contract to CARTERO_RECORD_V1.
+    canonical_result = generate_canonical_record_result(
+        diff_text,
+        config,
+        context_recap=context_recap,
+    )
+    yaml_text = render_legacy_yaml_bridge(
+        canonical_result.record,
+        context_recap=context_recap,
+    )
+    return LLMGenerationResult(
+        yaml_text=yaml_text,
+        was_chunked=canonical_result.was_chunked,
+        canonical_text=canonical_result.canonical_text,
     )
 
 

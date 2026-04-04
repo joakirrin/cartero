@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-04 18:45_
+_Last updated: 2026-04-04 21:32_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -76,16 +76,43 @@ It is a communication system.
 
 ---
 
-## 4. Current Priorities (Active Now)
+## State
 
-1. ✅ Phase 4.5 validated — Context-Aware Generation confirmed working with real API and real diffs
-2. Web interface parity — every CLI command must have an equivalent web endpoint. Currently missing: `cartero changelog`, `cartero session`. This is a non-negotiable architectural rule.
-3. Documentation Package (Phase 5)
-4. GitHub Integration (Phase 6)
-5. Guided CLI Flow (Phase 6.5)
-6. UX / Flow Simplification
-7. Repository & Presentation Layer
-8. File Management (Deprioritized)
+Phase 5.1 (Wizard Web Interface) completed and validated.
+Phase 4.8 (Web Interface Parity) complete — /api/changelog and /api/session endpoints live.
+
+Phase 5 (Documentation Package) in progress:
+
+* Canonical contract (CARTERO_RECORD_V1) defined and frozen
+* Parser + validation layer implemented
+* llm.py migrated to canonical output
+* generator.py migrated to use canonical record as primary source
+* YAML now exists only as a temporary bridge
+* Master-context freshness guard implemented
+
+Test suite cleaned:
+
+* Replaced root test_changelog.py with proper mocked tests
+* Full suite passing (except known skip)
+
+## Current Priorities
+
+1. Improve output quality toward product-style communication (Notion / Linear level)
+2. Remove YAML bridge and fully adopt canonical record across all surfaces
+3. Standardize output structure across commit, changelog, FAQ, and knowledge base
+4. Fix known bug: /api/session called 3x on wizard Step 4
+5. Prepare CLI/web to consume canonical record directly
+6. Phase 6 preparation: GitHub integration (error handling, confirmations)
+
+## Next Task
+
+Adapt CLI and web layers to consume the canonical record as the primary source of truth, removing reliance on YAML as an intermediate format.
+
+Focus on:
+
+* Updating CLI outputs to render from canonical record
+* Updating web endpoints to return canonical-based structures
+* Gradually removing the YAML bridge once compatibility is ensured
 
 ---
 
@@ -512,4 +539,4 @@ Update this file when:
 
 ### Reminder Rule
 If significant work has been completed and this file is not updated, remind the user to update it before continuing.
-<!-- Last updated: 2026-04-04 18:45 — Session: wizard Step 3 real generation connected and validated, Phase 5.1 complete -->
+<!-- Last updated: 2026-04-04 21:32 — Session: wizard Step 3 real generation connected and validated, Phase 5.1 complete -->

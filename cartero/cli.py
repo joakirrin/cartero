@@ -11,6 +11,12 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
+from cartero.context_state import (
+    MasterRefreshGuard,
+    get_master_refresh_guard,
+    mark_master_refresh_done,
+    start_session_tracking,
+)
 from cartero.executor import execute_actions
 from cartero.generator import (
     SummaryGenerationResult,
@@ -119,6 +125,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a file containing raw context. Reads from stdin when omitted.",
     )
     context_parser.set_defaults(handler=handle_context)
+
+    context_state_parser = subparsers.add_parser(
+        "context-state",
+        prog="cartero context-state",
+        help="Inspect or update the persisted master-context refresh state.",
+    )
+    context_state_subparsers = context_state_parser.add_subparsers(
+        dest="context_state_command",
+        required=True,
+    )
+
+    refresh_done_parser = context_state_subparsers.add_parser(
+        "refresh-done",
+        prog="cartero context-state refresh-done",
+        help="Mark the master context refresh as completed for the current session.",
+    )
+    refresh_done_parser.set_defaults(handler=handle_context_state_refresh_done)
 
     changelog_parser = subparsers.add_parser(
         "changelog",
@@ -247,7 +270,23 @@ def handle_session(
     args: argparse.Namespace, console: Console, error_console: Console
 ) -> int:
     try:
+        guard = get_master_refresh_guard()
+    except ValueError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    if guard.needs_refresh:
+        _print_master_context_warning(
+            error_console,
+            guard,
+            command_name="cartero session",
+            blocking=True,
+        )
+        return 2
+
+    try:
         generate_session_brief()
+        start_session_tracking()
     except (LLMConfigError, LLMCallError, ValueError) as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
@@ -264,6 +303,25 @@ def handle_context(
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
     console.print(recap, markup=False, end="")
+    return 0
+
+
+def handle_context_state_refresh_done(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    del args
+    try:
+        guard = mark_master_refresh_done()
+    except ValueError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    console.print("Recorded master context refresh.")
+    console.print(f"master_timestamp_at_start: {guard.master_timestamp_at_start}")
+    console.print(
+        f"master_timestamp_after_refresh: {guard.master_timestamp_after_refresh}"
+    )
+    console.print(f"master_refresh_status: {guard.master_refresh_status}")
     return 0
 
 
@@ -362,6 +420,25 @@ def _run_commit_flow(
     if not changed_files:
         console.print("Nothing to commit. Working tree clean.")
         return 0
+
+    try:
+        guard = get_master_refresh_guard()
+    except ValueError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    if guard.needs_refresh:
+        _print_master_context_warning(
+            error_console,
+            guard,
+            command_name="cartero commit",
+            blocking=False,
+        )
+        console.print("Continue with stale master context? [y/N]: ", end="")
+        stale_confirmation = input().strip()
+        if stale_confirmation.lower() not in {"y", "yes"}:
+            console.print("Aborted.")
+            return 0
 
     console.print("Changed files:")
     for index, path in enumerate(changed_files, start=1):
@@ -500,7 +577,15 @@ def _describe_mode(mode: str) -> str:
 
 def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    SUBCOMMANDS = {"run", "generate", "context", "commit", "changelog", "session"}
+    SUBCOMMANDS = {
+        "run",
+        "generate",
+        "context",
+        "context-state",
+        "commit",
+        "changelog",
+        "session",
+    }
     if args and args[0] in SUBCOMMANDS:
         return args
     return ["run", *args]
@@ -559,6 +644,42 @@ def _generate_summary_result(
         error_console.print(Text.assemble(("warning: ", "yellow"), (result.warning_message,)))
 
     return 0, result
+
+
+def _print_master_context_warning(
+    console: Console,
+    guard: MasterRefreshGuard,
+    *,
+    command_name: str,
+    blocking: bool,
+) -> None:
+    details: list[str] = []
+    if guard.system_state_initialized and not guard.system_state_exists:
+        details.append(
+            "context/system-state.md was missing, so Cartero initialized it conservatively."
+        )
+    if guard.master_timestamp_at_start is not None:
+        details.append(f"master_timestamp_at_start: {guard.master_timestamp_at_start}")
+    details.append(f"current_master_timestamp: {guard.current_master_timestamp}")
+    details.append(f"master_refresh_status: {guard.master_refresh_status}")
+
+    if blocking:
+        message = (
+            f"{command_name} was blocked because context/master-context.md was not "
+            "refreshed for this session. The session brief can be outdated."
+        )
+    else:
+        message = (
+            f"{command_name} is using a stale context/master-context.md. "
+            "The commit summary can be outdated."
+        )
+
+    guidance = (
+        "Update context/master-context.md, then run "
+        "`cartero context-state refresh-done`."
+    )
+    console.print(Text.assemble(("warning: ", "yellow"), (message,)))
+    console.print("\n".join([*details, guidance]))
 
 
 def _print_interactive_change_summary(
