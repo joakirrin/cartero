@@ -489,16 +489,16 @@ def _run_commit_flow(
         return 0
 
     try:
-        data = yaml.safe_load(result.yaml_text)
+        commit_fields = _load_commit_fields_for_commit(result)
     except yaml.YAMLError as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
 
     subject = ""
     body = None
-    if isinstance(data, dict):
-        subject = str(data.get("summary", "")).strip()
-        body_text = str(data.get("reason", "")).strip()
+    if commit_fields is not None:
+        subject = str(commit_fields.get("summary", "")).strip()
+        body_text = str(commit_fields.get("reason", "")).strip()
         body = body_text or None
 
     if not subject:
@@ -723,28 +723,23 @@ def _run_interactive_generation_action(
         return exit_code
 
     if action == "1":
-        _print_explanation(result.yaml_text, console)
+        _print_explanation(result, console)
         return 0
 
     console.print(result.yaml_text, markup=False, end="")
     return 0
 
 
-def _print_explanation(yaml_text: str, console: Console) -> None:
+def _print_explanation(result: SummaryGenerationResult, console: Console) -> None:
     console.print("Explanation:")
-    try:
-        data = yaml.safe_load(yaml_text)
-    except yaml.YAMLError:
-        console.print(yaml_text, markup=False, end="")
+    commit_fields = _load_commit_fields_for_explanation(result)
+    if commit_fields is None:
+        console.print(result.yaml_text, markup=False, end="")
         return
 
-    if not isinstance(data, dict):
-        console.print(yaml_text, markup=False, end="")
-        return
-
-    summary = str(data.get("summary", "")).strip()
-    reason = str(data.get("reason", "")).strip()
-    impact = str(data.get("impact", "")).strip()
+    summary = str(commit_fields.get("summary", "")).strip()
+    reason = str(commit_fields.get("reason", "")).strip()
+    impact = str(commit_fields.get("impact", "")).strip()
 
     if summary:
         console.print(summary)
@@ -752,6 +747,51 @@ def _print_explanation(yaml_text: str, console: Console) -> None:
         console.print(f"Why: {reason}")
     if impact:
         console.print(f"Impact: {impact}")
+
+
+def _load_commit_fields_for_commit(
+    result: SummaryGenerationResult,
+) -> dict[str, object] | None:
+    commit_fields = _coerce_commit_fields(result.commit_fields)
+    if commit_fields is not None:
+        return commit_fields
+    return _load_commit_fields_from_yaml_text(result.yaml_text)
+
+
+def _load_commit_fields_for_explanation(
+    result: SummaryGenerationResult,
+) -> dict[str, object] | None:
+    commit_fields = _coerce_commit_fields(result.commit_fields)
+    if commit_fields is not None:
+        return commit_fields
+    try:
+        return _load_commit_fields_from_yaml_text(result.yaml_text)
+    except yaml.YAMLError:
+        return None
+
+
+def _load_commit_fields_from_yaml_text(yaml_text: str) -> dict[str, object] | None:
+    data = yaml.safe_load(yaml_text)
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _coerce_commit_fields(candidate: object) -> dict[str, object] | None:
+    if not isinstance(candidate, dict):
+        return None
+    required_fields = ("summary", "reason", "impact", "actions")
+    if any(field not in candidate for field in required_fields):
+        return None
+    actions = candidate.get("actions")
+    if not isinstance(actions, (list, tuple)):
+        return None
+    return {
+        "summary": str(candidate.get("summary", "")).strip(),
+        "reason": str(candidate.get("reason", "")).strip(),
+        "impact": str(candidate.get("impact", "")).strip(),
+        "actions": list(actions),
+    }
 
 
 def _capture_interactive_context(console: Console, error_console: Console) -> str | None:

@@ -21,6 +21,10 @@ except ImportError:
 
 from cartero.canonical import CanonicalRecord, CanonicalRecordError, parse_canonical_record
 from cartero.config import CarteroConfig, default_config
+from cartero.semantic_quality import (
+    normalize_commit_summary_fields,
+    validate_commit_summary_quality,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -48,9 +52,10 @@ Rules:
 - summary must be exactly one sentence, start with "Cartero", and stay
   short. Target 140 characters or fewer.
 - reason is required and must be exactly one sentence explaining the
-  user-facing problem that existed before the change. It must never be empty.
+  real problem, limitation, inconsistency, ambiguity, or missing capability
+  that existed before the change. It must never be empty.
 - impact is required and must be exactly one sentence describing the
-  concrete observable outcome for a human using Cartero. Keep it short.
+  concrete user-facing or developer-facing outcome after the change. Keep it short.
 - summary, reason, and impact must stay product-style and understandable
   to a non-developer.
 - do not use bullets, numbered lists, or multiline blocks in summary,
@@ -58,15 +63,25 @@ Rules:
 - do not mention module names, function names, class names, file paths,
   or implementation details in summary, reason, or impact unless that
   identifier is absolutely required for a human to understand the change.
+- reason must describe the before-state problem, not the implementation.
+- impact must describe what is now clearer, easier, safer, more reliable,
+  or possible for the person reading the commit.
 - if the diff is broad, noisy, or highly technical, abstract toward the
   single most important human outcome instead of trying to document every
   internal change.
 - do not repeat the same sentence across summary, reason, and impact.
 - If the input includes a "Structured context recap" section, use it to
-  understand intent, audience framing, tradeoffs, and why the change
-  matters. Use the git diff as the source of truth for what changed.
+  understand intent, the user problem, tradeoffs, and the expected outcome.
+  Prioritize a clear user problem from context when writing reason.
+  Use the git diff as the source of truth for what changed.
 - If no structured recap is provided, infer carefully from the diff and
   avoid over-claiming intent that is not supported.
+- If the diff is too ambiguous to justify a strong claim, use a restrained
+  truthful fallback instead of generic fluff or invented impact.
+- Bad reason: "Improves canonical validation logic."
+- Good reason: "Developers did not have a reliable way to trust commit summaries when the diff was noisy."
+- Bad impact: "The parser now reuses canonical validation."
+- Good impact: "Developers can now rely on commit summaries that stay consistent with the real change."
 - repo must be one of: casadora-core, casadora-services,
   casadora-experiments, cartero
 - type must be one of: write, delete, mkdir
@@ -271,18 +286,32 @@ If FAQ or KNOWLEDGE_BASE have no safe content, return NONE for those blocks.
 
 COMMIT_BRIDGE_CANONICAL_GUIDANCE = """
 Additional quality requirements for commit-summary bridging:
+- The bridge will later derive `reason` and `impact` from this canonical record.
+- Make the derived `reason` clearly reflect the pre-change problem, limitation, inconsistency, ambiguity, or missing capability.
+- Make the derived `impact` clearly reflect the user-facing or developer-facing outcome after the change.
 - SUMMARY must be exactly one sentence, start with "Cartero", and target 140 characters or fewer.
 - SUMMARY must describe the most important human-visible improvement, not an implementation detail.
 - CHANGELOG must stay concise and product-style. Prefer one short paragraph or at most 2 short bullets.
+- The opening sentence of CHANGELOG should make the user-facing or developer-facing outcome obvious.
+- When context includes a clear user problem, keep that problem visible in the framing of the record.
+- Do not use CHANGELOG to document internal implementation inventories.
 - Do not list internal implementation steps, diagnostics, or technical inventories.
 - Do not mention module names, function names, class names, or file paths unless essential.
 - If the diff is broad or technical, summarize only the most important human outcome.
+- If the diff is ambiguous, use a restrained truthful fallback instead of a stronger unsupported claim.
+- Bad reason source: "Introduces canonical validation for the bridge."
+- Good reason source: "Developers did not have a reliable way to trust the generated summary."
+- Bad impact source: "The parser and bridge now share delimiter validation."
+- Good impact source: "Developers can now rely on summaries that stay aligned with the real change."
 """
 
 COMMIT_BRIDGE_QUALITY_RETRY_GUIDANCE = """
 IMPORTANT: Your previous response was structurally valid but not concise enough for commit-summary bridging.
 Retry with a shorter SUMMARY and a more concise CHANGELOG focused on the most important human outcome.
-Do not include internal implementation details, technical inventories, or repeated phrasing.
+Rewrite the record so the bridge can derive:
+- a `reason` about the pre-change problem
+- an `impact` about the outcome after the change
+Do not include internal implementation details, technical inventories, repeated phrasing, or generic filler.
 """
 
 
@@ -299,6 +328,8 @@ class LLMGenerationResult:
     yaml_text: str
     was_chunked: bool
     canonical_text: str | None = None
+    commit_fields: dict[str, object] | None = None
+    quality_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -306,6 +337,23 @@ class CanonicalLLMGenerationResult:
     canonical_text: str
     record: CanonicalRecord
     was_chunked: bool
+    retry_count: int = 0
+
+
+@dataclass(frozen=True)
+class LegacySummaryBridgeResult:
+    yaml_text: str
+    commit_fields: dict[str, object]
+    quality_metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class LegacySummaryPayloadResult:
+    payload: dict[str, object]
+    used_normalization: bool
+    normalization_rules: tuple[str, ...]
+    used_fallback_reason: bool
+    used_fallback_impact: bool
 
 
 class CarteroDumper(yaml.SafeDumper):
@@ -533,13 +581,26 @@ def _canonical_record_to_legacy_yaml_with_context(
     *,
     context_recap: str | None,
 ) -> str:
-    compatibility_payload = _build_legacy_summary_payload(
+    bridge_result = build_legacy_yaml_bridge_result(
         record,
         context_recap=context_recap,
     )
-    _validate_legacy_summary_payload(compatibility_payload)
+    return bridge_result.yaml_text
+
+
+def build_legacy_yaml_bridge_result(
+    record: CanonicalRecord,
+    *,
+    context_recap: str | None = None,
+    retry_count: int = 0,
+) -> LegacySummaryBridgeResult:
+    payload_result = _build_legacy_summary_payload(
+        record,
+        context_recap=context_recap,
+    )
+    semantic_result = _validate_legacy_summary_payload(payload_result.payload)
     yaml_output = yaml.dump(
-        compatibility_payload,
+        payload_result.payload,
         Dumper=CarteroDumper,
         sort_keys=False,
         allow_unicode=True,
@@ -550,7 +611,21 @@ def _canonical_record_to_legacy_yaml_with_context(
         yaml.safe_load(yaml_output)
     except yaml.YAMLError as exc:
         raise LLMCallError(f"Generated YAML could not be parsed: {exc}") from exc
-    return yaml_output
+    return LegacySummaryBridgeResult(
+        yaml_text=yaml_output,
+        commit_fields=_copy_legacy_commit_fields(payload_result.payload),
+        quality_metadata={
+            "semantic_status": semantic_result.status,
+            "semantic_warnings": [
+                _serialize_semantic_issue(issue) for issue in semantic_result.warnings
+            ],
+            "used_normalization": payload_result.used_normalization,
+            "normalization_rules": list(payload_result.normalization_rules),
+            "retry_count": retry_count,
+            "used_fallback_reason": payload_result.used_fallback_reason,
+            "used_fallback_impact": payload_result.used_fallback_impact,
+        },
+    )
 
 
 def render_legacy_yaml_bridge(
@@ -570,27 +645,53 @@ def _build_legacy_summary_payload(
     record: CanonicalRecord,
     *,
     context_recap: str | None,
-) -> dict[str, object]:
+) -> LegacySummaryPayloadResult:
     summary = _normalize_commit_field(record.summary, max_chars=140)
     recap_sections = _parse_context_recap_sections(context_recap)
-    reason_source = (
-        recap_sections.get("User problem")
-        or recap_sections.get("Explanation for non-technical users")
-        or "Before this change, the workflow was less clear for users."
-    )
-    impact_source = (
-        recap_sections.get("Expected user-visible outcome")
-        or _first_commit_sentence(record.changelog)
-        or summary
-    )
+    reason_source = recap_sections.get("User problem")
+    used_fallback_reason = reason_source is None
+    if reason_source is None:
+        reason_source = (
+            recap_sections.get("Explanation for non-technical users")
+            or "Before this change, the workflow was less clear for users."
+        )
+    impact_source = recap_sections.get("Expected user-visible outcome")
+    used_fallback_impact = impact_source is None
+    if impact_source is None:
+        impact_source = (
+            _first_commit_sentence(record.changelog)
+            or summary
+        )
     reason = _normalize_commit_field(reason_source, max_chars=180)
     impact = _normalize_commit_field(impact_source, max_chars=180)
-    return {
-        "summary": summary,
-        "reason": reason,
-        "impact": impact,
-        "actions": [],
-    }
+    normalized_fields = normalize_commit_summary_fields(
+        summary=summary,
+        reason=reason,
+        impact=impact,
+        problem_hint=recap_sections.get("User problem"),
+        outcome_hint=recap_sections.get("Expected user-visible outcome"),
+    )
+    if normalized_fields.changed:
+        logger.debug(
+            "Applied commit-summary normalization rules: %s",
+            ", ".join(normalized_fields.applied_rules),
+        )
+    if "reason" in normalized_fields.applied_rules:
+        used_fallback_reason = True
+    if "impact" in normalized_fields.applied_rules:
+        used_fallback_impact = True
+    return LegacySummaryPayloadResult(
+        payload={
+            "summary": normalized_fields.summary,
+            "reason": normalized_fields.reason,
+            "impact": normalized_fields.impact,
+            "actions": [],
+        },
+        used_normalization=normalized_fields.changed,
+        normalization_rules=normalized_fields.applied_rules,
+        used_fallback_reason=used_fallback_reason,
+        used_fallback_impact=used_fallback_impact,
+    )
 
 
 def _parse_context_recap_sections(context_recap: str | None) -> dict[str, str]:
@@ -656,7 +757,7 @@ def _normalize_commit_field(text: str, *, max_chars: int) -> str:
     return f"{truncated}..."
 
 
-def _validate_legacy_summary_payload(payload: dict[str, object]) -> None:
+def _validate_legacy_summary_payload(payload: dict[str, object]):
     summary = str(payload.get("summary", "")).strip()
     reason = str(payload.get("reason", "")).strip()
     impact = str(payload.get("impact", "")).strip()
@@ -679,6 +780,47 @@ def _validate_legacy_summary_payload(payload: dict[str, object]) -> None:
         raise LLMCallError("Commit summary quality check failed: impact must be a single sentence")
     if len(impact) > 220:
         raise LLMCallError("Commit summary quality check failed: impact is too long")
+
+    semantic_result = validate_commit_summary_quality(
+        summary=summary,
+        reason=reason,
+        impact=impact,
+    )
+    if semantic_result.status == "fail":
+        raise LLMCallError(
+            "Commit summary semantic quality check failed: "
+            + "; ".join(semantic_result.messages(severity="fail"))
+        )
+    if semantic_result.status == "warn":
+        logger.warning(
+            "Commit summary semantic quality warning: %s",
+            "; ".join(semantic_result.messages(severity="warn")),
+        )
+    return semantic_result
+
+
+def _copy_legacy_commit_fields(payload: dict[str, object]) -> dict[str, object]:
+    actions = payload.get("actions", [])
+    if not isinstance(actions, (list, tuple)):
+        actions = []
+    return {
+        "summary": str(payload.get("summary", "")),
+        "reason": str(payload.get("reason", "")),
+        "impact": str(payload.get("impact", "")),
+        "actions": [
+            dict(action) if isinstance(action, dict) else action
+            for action in actions
+        ],
+    }
+
+
+def _serialize_semantic_issue(issue) -> dict[str, str]:
+    return {
+        "field": issue.field,
+        "code": issue.code,
+        "severity": issue.severity,
+        "message": issue.message,
+    }
 
 
 def _contains_commit_bullets_or_newlines(text: str) -> bool:
@@ -713,6 +855,7 @@ def _generate_canonical_record_from_chunks(
     retry_suffix: str,
 ) -> CanonicalLLMGenerationResult:
     parsed_records: list[CanonicalRecord] = []
+    retry_count = 0
 
     for chunk_index, chunk in enumerate(chunks, start=1):
         last_error: Exception | None = None
@@ -735,6 +878,7 @@ def _generate_canonical_record_from_chunks(
                 )
                 _, record = _parse_canonical_output(raw_output)
                 parsed_records.append(record)
+                retry_count += attempt - 1
                 break
             except LLMCallError as exc:
                 last_error = exc
@@ -758,6 +902,7 @@ def _generate_canonical_record_from_chunks(
         canonical_text=canonical_text,
         record=merged_record,
         was_chunked=True,
+        retry_count=retry_count,
     )
 
 
@@ -1049,6 +1194,7 @@ def generate_canonical_record_result(
                 canonical_text=canonical_text,
                 record=record,
                 was_chunked=False,
+                retry_count=attempt - 1,
             )
         except LLMCallError as exc:
             last_error = exc
@@ -1086,14 +1232,17 @@ def generate_commit_summary_result(
         config,
         context_recap=context_recap,
     )
-    yaml_text = render_legacy_yaml_bridge(
+    bridge_result = build_legacy_yaml_bridge_result(
         canonical_result.record,
         context_recap=context_recap,
+        retry_count=canonical_result.retry_count,
     )
     return LLMGenerationResult(
-        yaml_text=yaml_text,
+        yaml_text=bridge_result.yaml_text,
         was_chunked=canonical_result.was_chunked,
         canonical_text=canonical_result.canonical_text,
+        commit_fields=bridge_result.commit_fields,
+        quality_metadata=bridge_result.quality_metadata,
     )
 
 

@@ -21,6 +21,8 @@ class SummaryGenerationResult:
     # Legacy YAML remains as a temporary bridge for older callers.
     yaml_text: str
     warning_message: str | None = None
+    commit_fields: dict[str, object] | None = None
+    quality_metadata: dict[str, object] | None = None
 
 
 def generate_summary_from_diff(
@@ -49,6 +51,7 @@ def generate_summary_result_from_diff(
         context_recap = llm.generate_context_recap(raw_context, active_config)
 
     last_error: llm.LLMCallError | None = None
+    total_retry_count = 0
     for attempt in range(1, max(1, active_config.max_retries) + 1):
         extra_system_prompt = llm.COMMIT_BRIDGE_CANONICAL_GUIDANCE
         if attempt > 1:
@@ -59,18 +62,23 @@ def generate_summary_result_from_diff(
             context_recap=context_recap,
             extra_system_prompt=extra_system_prompt,
         )
+        total_retry_count += canonical_result.retry_count
         try:
             llm.validate_commit_bridge_source_record(canonical_result.record)
             warning_message = CHUNKED_DIFF_WARNING if canonical_result.was_chunked else None
-            yaml_text = llm.render_legacy_yaml_bridge(
+            total_retry_count += attempt - 1
+            bridge_result = llm.build_legacy_yaml_bridge_result(
                 canonical_result.record,
                 context_recap=context_recap,
+                retry_count=total_retry_count,
             )
             return SummaryGenerationResult(
                 record=canonical_result.record,
                 canonical_text=canonical_result.canonical_text,
-                yaml_text=yaml_text,
+                yaml_text=bridge_result.yaml_text,
                 warning_message=warning_message,
+                commit_fields=bridge_result.commit_fields,
+                quality_metadata=bridge_result.quality_metadata,
             )
         except llm.LLMCallError as exc:
             last_error = exc

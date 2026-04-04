@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from cartero.canonical import parse_canonical_record
+from cartero.generator import SummaryGenerationResult
 from cartero.web import create_app
 
 
@@ -111,3 +114,66 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('link.download = "commit-summary.yaml"', page)
         self.assertIn("const sampleYaml =", page)
+
+    def test_generate_api_includes_additive_structured_fields(self) -> None:
+        canonical_text = """<<<CARTERO_RECORD_V1>>>
+<<<SUMMARY>>>
+Cartero now explains generated changes in plain language.
+<<<END_SUMMARY>>>
+<<<CHANGELOG>>>
+Cartero now returns a reusable canonical communication record before rendering legacy YAML.
+<<<END_CHANGELOG>>>
+<<<FAQ>>>
+NONE
+<<<END_FAQ>>>
+<<<KNOWLEDGE_BASE>>>
+NONE
+<<<END_KNOWLEDGE_BASE>>>
+<<<END_CARTERO_RECORD_V1>>>"""
+        result = SummaryGenerationResult(
+            record=parse_canonical_record(canonical_text),
+            canonical_text=canonical_text,
+            yaml_text=(
+                "summary: Cartero now explains generated changes in plain language.\n"
+                "reason: Manual review was taking too long.\n"
+                "impact: Developers can now review changes faster.\n"
+                "actions: []\n"
+            ),
+            warning_message="Diff was too large and was split into multiple chunks.",
+            commit_fields={
+                "summary": "Cartero now explains generated changes in plain language.",
+                "reason": "Manual review was taking too long.",
+                "impact": "Developers can now review changes faster.",
+                "actions": [],
+            },
+            quality_metadata={
+                "semantic_status": "warn",
+                "semantic_warnings": [
+                    {
+                        "field": "impact",
+                        "code": "generic_outcome_fallback",
+                        "severity": "warn",
+                        "message": "impact is truthful but still generic",
+                    }
+                ],
+                "used_normalization": True,
+                "normalization_rules": ["impact"],
+                "retry_count": 1,
+                "used_fallback_reason": False,
+                "used_fallback_impact": True,
+            },
+        )
+
+        with patch("cartero.web.generate_summary_result_from_diff", return_value=result):
+            response = self.client.post(
+                "/generate",
+                data={"diff_text": "diff --git a/x b/x\n", "context_text": "notes"},
+            )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["yaml"], result.yaml_text)
+        self.assertEqual(payload["warning"], result.warning_message)
+        self.assertEqual(payload["canonical_text"], canonical_text)
+        self.assertEqual(payload["commit_fields"], result.commit_fields)
+        self.assertEqual(payload["quality"], result.quality_metadata)

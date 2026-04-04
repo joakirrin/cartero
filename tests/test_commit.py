@@ -34,12 +34,17 @@ NONE
 def _summary_result(
     yaml_text: str,
     warning_message: str | None = None,
+    *,
+    commit_fields: dict[str, object] | None = None,
+    quality_metadata: dict[str, object] | None = None,
 ) -> SummaryGenerationResult:
     return SummaryGenerationResult(
         record=parse_canonical_record(_CANONICAL_TEXT),
         canonical_text=_CANONICAL_TEXT,
         yaml_text=yaml_text,
         warning_message=warning_message,
+        commit_fields=commit_fields,
+        quality_metadata=quality_metadata,
     )
 
 
@@ -195,6 +200,56 @@ class CommitCommandTests(unittest.TestCase):
                 "summary: add commit command\n"
                 "reason: needed for git flow\n"
                 "actions: []\n"
+            ),
+        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
+            exit_code, stdout, stderr = self._run_commit(["a", "y"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("abc1234", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_git_commit.assert_called_once_with("add commit command", "needed for git flow")
+
+    def test_commit_prefers_structured_fields_when_yaml_is_invalid(self) -> None:
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files, patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: [\n",
+                commit_fields={
+                    "summary": "Cartero now commits guided changes",
+                    "reason": "Manual testing took too many steps",
+                    "impact": "Developers can review changes faster",
+                    "actions": [],
+                },
+            ),
+        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
+            exit_code, stdout, stderr = self._run_commit(["a", "y"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("abc1234", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_git_commit.assert_called_once_with(
+            "Cartero now commits guided changes",
+            "Manual testing took too many steps",
+        )
+
+    def test_commit_falls_back_to_yaml_when_structured_fields_are_invalid(self) -> None:
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files, patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n",
+                commit_fields={"summary": "broken structured data"},
             ),
         ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
             exit_code, stdout, stderr = self._run_commit(["a", "y"])

@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-04 21:32_
+_Last updated: 2026-04-04 22:56_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -84,20 +84,21 @@ Phase 4.8 (Web Interface Parity) complete — /api/changelog and /api/session en
 Phase 5 (Documentation Package) in progress:
 
 * Canonical contract (CARTERO_RECORD_V1) defined and frozen
-* Parser + validation layer implemented
-* llm.py migrated to canonical output
-* generator.py migrated to use canonical record as primary source
-* YAML now exists only as a temporary bridge
-* Master-context freshness guard implemented
+* Parser + validation layer implemented and tested
+* `llm.py` migrated to canonical output
+* `generator.py` uses canonical record as the primary internal source of truth
+* YAML remains as a temporary bridge for backward compatibility
+* Master-context freshness guard implemented and validated in the real workflow
+* Commit generation now works end-to-end through the canonical → generator → YAML bridge
 
 Test suite cleaned:
 
-* Replaced root test_changelog.py with proper mocked tests
+* Replaced root `test_changelog.py` with proper mocked tests
 * Full suite passing (except known skip)
 
 ## Current Priorities
 
-1. Improve output quality toward product-style communication (Notion / Linear level)
+1. Improve output quality toward product-style communication (focus on commit summary `reason` and `impact`)
 2. Remove YAML bridge and fully adopt canonical record across all surfaces
 3. Standardize output structure across commit, changelog, FAQ, and knowledge base
 4. Fix known bug: /api/session called 3x on wizard Step 4
@@ -106,13 +107,19 @@ Test suite cleaned:
 
 ## Next Task
 
-Adapt CLI and web layers to consume the canonical record as the primary source of truth, removing reliance on YAML as an intermediate format.
+Continue improving output quality for commit summaries before fully migrating CLI and web to canonical record.
 
 Focus on:
 
-* Updating CLI outputs to render from canonical record
-* Updating web endpoints to return canonical-based structures
-* Gradually removing the YAML bridge once compatibility is ensured
+* Making `reason` consistently reflect the real problem solved, not generic phrasing
+* Making `impact` consistently user-facing and outcome-driven
+* Reducing remaining technical/internal wording in commit outputs
+* Iterating with real diffs to validate improvements
+
+Parallel track:
+
+* Prepare CLI and web layers to consume canonical record directly
+* Plan safe removal of the YAML bridge once output quality is stable
 
 ---
 
@@ -194,6 +201,11 @@ Every CLI function must have an equivalent web interface.
 - Output quality still needs improvement  
   → summaries should be shorter and more product-like  
 
+- Commit output quality still needs refinement:
+  → `reason` can remain too generic and not reflect the actual user/problem context from the diff
+  → `impact` can still lean toward internal or technical wording instead of user-facing outcomes
+  → further prompt and bridge-level quality improvements are required before the output is consistently product-level
+
 - Automatic validation of canonical records is not yet fully enforced
   → malformed records may still pass too far through the pipeline
 
@@ -204,7 +216,10 @@ Every CLI function must have an equivalent web interface.
   → will be simplified via interactive mode  
 
 - Streaming is handled inside llm.py rather than the CLI layer — architecturally not ideal but preserves the existing test suite without modification
-- test_changelog.py lives in the repo root — should be moved to tests/ or removed before production
+- File staging in `cartero commit` does not yet correctly handle deleted files:
+  → deleted files can still appear in the file selection list
+  → selecting all files can cause git pathspec errors for removed files
+  → staging logic needs a deletion-aware fix
 - Step 3 wizard UI labels ("Updating GitHub", "Updating project context") are cosmetic and do not reflect real backend calls. Must be corrected before Phase 6 connects real GitHub operations — labels must only appear when the corresponding action is actually executing
 - Phase 6 must include a success state that confirms changes were applied and that the new logs are visible on GitHub
 - Phase 6 must include an error state that surfaces the actual error message from a failed GitHub upload — silent failure is not acceptable
@@ -319,6 +334,52 @@ Every CLI function must have an equivalent web interface.
 ### Phase X — Context Automation & Vibe Loop
 
 Introduce a system that continuously aligns product context, communication, and LLM workflows with real development activity.
+
+#### X.0 — LLM-Orchestrated Development Loop
+
+Cartero development leverages a dual-layer LLM workflow to improve speed, quality, and token efficiency.
+
+- Execution layer (Codex):
+  - reads and modifies the real codebase
+  - runs tests
+  - implements features and fixes
+  - evaluates system behavior directly in context
+
+- Reasoning layer (ChatGPT):
+  - defines strategy, quality criteria, and constraints
+  - designs prompts and evaluation logic
+  - guides architectural decisions
+  - interprets results and determines next steps
+
+Workflow pattern:
+
+1. Define task and quality criteria
+2. Generate implementation prompt
+3. Codex executes and modifies code
+4. Codex validates via tests and reports results
+5. Reasoning layer evaluates output quality
+6. Iterate with refined prompts if needed
+
+Key benefits:
+
+- Eliminates the need to copy large code context
+- Reduces context drift because Codex operates on real files
+- Enables fast iteration loops: spec → implement → evaluate → refine
+- Improves output quality through structured evaluation
+
+Strategic relevance:
+
+- This pattern is a precursor to Phase X
+- The current manual orchestration:
+  - human defines criteria
+  - LLM executes
+  - human evaluates
+- Will evolve into:
+  - system-defined criteria
+  - automated validation and retries
+  - continuous quality evaluation
+  - autonomous context alignment
+- This establishes Cartero as a system that not only generates communication, but also continuously improves its own output quality through structured feedback loops
 
 #### X.1 — Work Session Capture
 
@@ -503,12 +564,7 @@ Files are named using date + UUID and never overwrite each other.
 
 ### Test Coverage
 
-48 tests passing:
-
-- LLM generation (chunking, retry, validation)
-- CLI behavior
-- Web endpoints
-- Commit flow
+Test coverage expanded significantly across canonical parsing, context-state guards, CLI behavior, commit flow, and changelog generation.
 
 ---
 

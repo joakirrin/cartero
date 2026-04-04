@@ -46,12 +46,17 @@ NONE
 def _summary_result(
     yaml_text: str,
     warning_message: str | None = None,
+    *,
+    commit_fields: dict[str, object] | None = None,
+    quality_metadata: dict[str, object] | None = None,
 ) -> SummaryGenerationResult:
     return SummaryGenerationResult(
         record=parse_canonical_record(_CANONICAL_TEXT),
         canonical_text=_CANONICAL_TEXT,
         yaml_text=yaml_text,
         warning_message=warning_message,
+        commit_fields=commit_fields,
+        quality_metadata=quality_metadata,
     )
 
 
@@ -510,6 +515,34 @@ class InteractiveCliTests(unittest.TestCase):
             "diff --git a/cartero/cli.py b/cartero/cli.py\n",
             raw_context="first line\nsecond line",
         )
+
+    def test_cli_no_args_explain_path_prefers_structured_fields_when_yaml_is_invalid(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        stdin = io.StringIO("1\n1\n3\n")
+
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py b/cartero/cli.py\n"
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: [\n",
+                commit_fields={
+                    "summary": "Cartero now explains changes in plain language.",
+                    "reason": "It was hard to understand diffs quickly.",
+                    "impact": "You can review changes faster.",
+                    "actions": [],
+                },
+            ),
+        ), patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn("Explanation:", stdout.getvalue())
+        self.assertIn("Cartero now explains changes in plain language.", stdout.getvalue())
+        self.assertIn("Why: It was hard to understand diffs quickly.", stdout.getvalue())
+        self.assertIn("Impact: You can review changes faster.", stdout.getvalue())
 
     def test_cli_no_args_commit_path_reuses_commit_flow(self) -> None:
         stdout = io.StringIO()

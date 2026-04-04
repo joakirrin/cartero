@@ -1,0 +1,19 @@
+Goal:
+Improve commit-summary output quality by making reason problem-driven and impact user-facing, and prepare the system for canonical-first consumption.
+
+User problem:
+Commit summaries were often generic or too technical, making it hard to understand the real problem solved and the actual impact of changes.
+
+Decisions:
+- introduced semantic quality validation for reason and impact
+- added deterministic normalization layer before retry
+- strengthened prompt instructions for commit generation
+- exposed structured commit_fields and quality_metadata
+- moved CLI and web internal consumption away from YAML parsing
+
+Tradeoffs:
+- kept YAML bridge for backward compatibility instead of removing it early
+- accepted partial observability (no per-attempt trace yet) to avoid over-refactoring
+
+User impact:
+Developers can now understand changes more clearly through problem-driven summaries and outcome-focused impact, with more reliable and structured outputs across CLI and web.

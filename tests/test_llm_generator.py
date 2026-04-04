@@ -154,6 +154,18 @@ class HappyPathTests(unittest.TestCase):
         )
         self.assertIsInstance(result.yaml_text, str)
 
+    def test_result_includes_structured_commit_fields_and_quality_metadata(self) -> None:
+        with self._patch_anthropic(VALID_CANONICAL_RECORD):
+            result = generate_summary_result_from_diff("diff --git a/x b/x")
+
+        payload = yaml.safe_load(result.yaml_text)
+        self.assertEqual(result.commit_fields, payload)
+        self.assertEqual(result.quality_metadata["semantic_status"], "pass")
+        self.assertEqual(result.quality_metadata["semantic_warnings"], [])
+        self.assertFalse(result.quality_metadata["used_normalization"])
+        self.assertEqual(result.quality_metadata["normalization_rules"], [])
+        self.assertEqual(result.quality_metadata["retry_count"], 0)
+
     def test_strips_markdown_fences(self) -> None:
         fenced = f"```text\n{VALID_CANONICAL_RECORD}\n```"
         with self._patch_anthropic(fenced):
@@ -205,6 +217,8 @@ class HappyPathTests(unittest.TestCase):
 
         self.assertEqual(result.canonical_text, VALID_CANONICAL_RECORD)
         self.assertIn("impact:", result.yaml_text)
+        self.assertEqual(result.commit_fields, yaml.safe_load(result.yaml_text))
+        self.assertIsNotNone(result.quality_metadata)
 
     def _patch_anthropic(self, response_text: str):
         mock_client = MagicMock()
@@ -344,6 +358,20 @@ class TruncationTests(unittest.TestCase):
             result = generate_summary_result_from_diff(big_diff, config=self.TINY_CONFIG)
 
         self.assertIn("summary:", result.yaml_text)
+
+    def test_chunked_generation_keeps_structured_fields_in_sync_with_yaml(self) -> None:
+        big_diff = (
+            "diff --git a/file1.py b/file1.py\n"
+            "+ " + "x" * 100 + "\n"
+            "diff --git a/file2.py b/file2.py\n"
+            "+ " + "y" * 100 + "\n"
+        )
+        with self._patch_anthropic(VALID_CANONICAL_RECORD):
+            result = generate_summary_result_from_diff(big_diff, config=self.TINY_CONFIG)
+
+        payload = yaml.safe_load(result.yaml_text)
+        self.assertEqual(result.warning_message, CHUNKED_DIFF_WARNING)
+        self.assertEqual(result.commit_fields, payload)
 
     def test_cli_prints_warning_to_stderr(self) -> None:
         import io
@@ -559,15 +587,60 @@ class CommitBridgeQualityTests(unittest.TestCase):
         self.assertLessEqual(len(payload["impact"]), 220)
         self.assertNotIn("\n", payload["impact"])
 
-    def test_quality_retry_triggers_for_valid_but_bad_content(self) -> None:
+    def test_quality_metadata_surfaces_normalization_and_semantic_warnings(self) -> None:
+        record = parse_canonical_record(
+            _build_canonical_record(
+                "Cartero now accepts context files during generation.",
+                "The workflow is now clearer.",
+            )
+        )
+        recap = (
+            "Goal: Support context files.\n"
+            "User problem:\n"
+            "Key decisions: Keep the bridge deterministic.\n"
+            "Tradeoffs: Use conservative fallbacks.\n"
+            "Expected user-visible outcome:\n"
+            "Explanation for non-technical users: Introduces context file support.\n"
+        )
+        canonical_result = CanonicalLLMGenerationResult(
+            canonical_text=_render_canonical_record_for_test(record),
+            record=record,
+            was_chunked=False,
+        )
+
+        with patch(
+            "cartero.generator.llm.generate_context_recap",
+            return_value=recap,
+        ), patch(
+            "cartero.generator.llm.generate_canonical_record_result",
+            return_value=canonical_result,
+        ):
+            result = generate_summary_result_from_diff(
+                "diff --git a/x b/x",
+                config=self.BASE_CONFIG,
+                raw_context="messy copied notes",
+            )
+
+        self.assertEqual(
+            result.commit_fields["reason"],
+            "Before this change, context file support was missing.",
+        )
+        self.assertEqual(result.commit_fields["impact"], "The workflow is now clearer.")
+        self.assertEqual(result.quality_metadata["semantic_status"], "warn")
+        self.assertEqual(
+            result.quality_metadata["semantic_warnings"][0]["code"],
+            "generic_outcome_fallback",
+        )
+        self.assertTrue(result.quality_metadata["used_normalization"])
+        self.assertEqual(result.quality_metadata["normalization_rules"], ["reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_impact"])
+
+    def test_quality_retry_triggers_for_semantic_failures(self) -> None:
         bad_record = parse_canonical_record(
             _build_canonical_record(
-                (
-                    "Cartero now introduces a very long technical explanation about parser normalization, "
-                    "context recap handling, canonical bridge wiring, YAML rendering compatibility, and "
-                    "internal retry coordination across generation paths for multiple surfaces."
-                ),
-                "Cartero now keeps communication output aligned.",
+                "Cartero now changes prompt labels for developers.",
+                "Improves prompt behavior.",
             )
         )
         good_record = parse_canonical_record(VALID_CANONICAL_RECORD)
@@ -598,6 +671,7 @@ class CommitBridgeQualityTests(unittest.TestCase):
         )
         payload = yaml.safe_load(result.yaml_text)
         self.assertTrue(payload["reason"].strip())
+        self.assertEqual(result.quality_metadata["retry_count"], 1)
 
 
 class CanonicalGenerationTests(unittest.TestCase):

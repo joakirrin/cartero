@@ -100,7 +100,12 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         except (LLMConfigError, LLMCallError) as exc:
             return jsonify({"error": str(exc)}), 500
-        payload = {"yaml": result.yaml_text}
+        payload = {
+            "yaml": result.yaml_text,
+            "canonical_text": result.canonical_text,
+            "commit_fields": result.commit_fields,
+            "quality": result.quality_metadata,
+        }
         if result.warning_message:
             payload["warning"] = result.warning_message
         return jsonify(payload), 200
