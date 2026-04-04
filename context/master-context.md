@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-03 23:19_
+_Last updated: 2026-04-04 10:52_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -66,12 +66,15 @@ It is a communication system.
 - Defined the output/render layer for deterministic reuse of canonical records across output surfaces
 - Defined the Codex prompt bridge structure for converting canonical records into agent-ready instructions
 - Established a sequential prompting strategy: contract -> transformation -> output layer
+- Generate product-style changelog entries from git diffs (`cartero changelog`)
+- Real-time streaming output for changelog generation (Anthropic provider)
+- Phase 4.5 validated with real API calls and real diffs
 
 ---
 
 ## 4. Current Priorities (Active Now)
 
-1. [Validate Phase 4.5 — Context-Aware Generation before marking complete]
+1. ✅ Phase 4.5 validated — Context-Aware Generation confirmed working with real API and real diffs
 2. Documentation Package (Phase 5)
 3. GitHub Integration (Phase 6)
 4. Guided CLI Flow (Phase 6.5)
@@ -168,6 +171,9 @@ Every CLI function must have an equivalent web interface.
 - CLI requires multiple commands for full workflow  
   → will be simplified via interactive mode  
 
+- Streaming is handled inside llm.py rather than the CLI layer — architecturally not ideal but preserves the existing test suite without modification
+- test_changelog.py lives in the repo root — should be moved to tests/ or removed before production
+
 ---
 
 ## 8. Open Decisions / Pending Validation
@@ -204,6 +210,7 @@ Every CLI function must have an equivalent web interface.
 
 ### Phase 5 — Documentation Package
 
+- ✅ First output surface implemented: `cartero changelog` generates product-style changelog entries from git diffs with optional context and real-time streaming output
 - Improve output quality toward product-style communication (Notion / Linear level)
 - Standardize output structure and formatting
 - Ensure consistency across:
@@ -350,6 +357,8 @@ Every working session with Cartero follows this flow:
 6. Summarize what changed in the session
 7. Update this master file before closing
 8. Generate new session brief for next session
+
+Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
 
 This creates an observable history of how Cartero's LLM output quality improves with each phase.
 

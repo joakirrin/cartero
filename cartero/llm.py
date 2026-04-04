@@ -65,6 +65,9 @@ Rules:
   binary files, compiled artifacts, and any file whose content exceeds
   500 characters. These files should be acknowledged in the summary or
   impact fields if relevant, but never reproduced in actions.
+- Do NOT include actions for files under context/, docs/, or any directory
+  that contains project documentation, session notes, or internal context.
+  These are not executable changes and must never appear in actions.
 - Return ONLY valid JSON
 - Do not include markdown fences
 - Do not include explanations, preamble, or trailing text
