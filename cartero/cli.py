@@ -24,7 +24,12 @@ from cartero.git import (
     get_diff,
     stage_files,
 )
-from cartero.llm import LLMCallError, LLMConfigError, generate_changelog
+from cartero.llm import (
+    LLMCallError,
+    LLMConfigError,
+    generate_changelog,
+    generate_session_brief,
+)
 from cartero.parser import ParseError, load_summary
 from cartero.simulator import SimulatedAction, simulate_actions
 from cartero.validator import ALLOWED_REPOS, Change, ValidationError, validate_summary
@@ -149,6 +154,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to raw context. Cartero will compress it before generation.",
     )
     commit_parser.set_defaults(handler=handle_commit)
+
+    session_parser = subparsers.add_parser(
+        "session",
+        prog="cartero session",
+        help="Generate a session brief from the master context.",
+    )
+    session_parser.set_defaults(handler=handle_session)
     return parser
 
 
@@ -228,6 +240,17 @@ def handle_changelog(
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
 
+    return 0
+
+
+def handle_session(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    try:
+        generate_session_brief()
+    except (LLMConfigError, LLMCallError, ValueError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
     return 0
 
 
@@ -477,7 +500,7 @@ def _describe_mode(mode: str) -> str:
 
 def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    SUBCOMMANDS = {"run", "generate", "context", "commit", "changelog"}
+    SUBCOMMANDS = {"run", "generate", "context", "commit", "changelog", "session"}
     if args and args[0] in SUBCOMMANDS:
         return args
     return ["run", *args]

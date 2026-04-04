@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import yaml
 
@@ -129,6 +130,42 @@ Tradeoffs:
 Expected user-visible outcome:
 Explanation for non-technical users:
 Do not add markdown fences, bullets outside the sections, or extra text.
+"""
+
+SESSION_BRIEF_SYSTEM_PROMPT = """You are Cartero's session brief generator.
+
+You receive the full content of context/master-context.md.
+
+Your job is to generate a concise session brief that a fresh LLM can use to
+start a working session without making decisions that contradict the architecture
+or roadmap.
+
+Return ONLY this structure, with no preamble, no markdown fences, no extra text:
+
+# Cartero – Session Brief
+
+## State
+<last completed phase and what is pending or in progress>
+
+## Strategic Direction
+Cartero turns code changes into structured, reusable communication across
+multiple outputs. It is a communication system, not a commit generator.
+
+## Current Priorities
+<numbered list of active priorities from the master context>
+
+## Next Task
+<the single most important next task, with enough detail to execute it>
+
+## Modules Involved
+<only the modules relevant to the next task>
+
+## Rules (Non-Negotiable)
+<only the rules an LLM would violate by default — keep this short>
+
+## End of Session
+Before closing: summarize what changed, update context/master-context.md,
+run `cartero commit --context-file <session-context-file>`, and push.
 """
 
 CHANGELOG_SYSTEM_PROMPT = """You are Cartero's changelog generator.
@@ -598,6 +635,44 @@ def generate_changelog(
         except LLMCallError as exc:
             last_error = exc
             logger.warning("Changelog attempt %d failed: %s", attempt, exc)
+        except Exception as exc:
+            raise LLMCallError(str(exc)) from exc
+
+    raise LLMCallError(
+        f"Failed after {max(1, active_config.max_retries)} attempts. Last error: {last_error}"
+    )
+
+
+def generate_session_brief(config: CarteroConfig | None = None) -> str:
+    master_context_path = Path("context/master-context.md")
+    if not master_context_path.exists():
+        raise ValueError(
+            f"Master context not found at {master_context_path}. "
+            "Run this command from the root of the Cartero repository."
+        )
+    master_context = master_context_path.read_text(encoding="utf-8")
+
+    active_config = config or default_config
+    client = _get_client(active_config)
+    last_error: LLMCallError | None = None
+
+    for attempt in range(1, max(1, active_config.max_retries) + 1):
+        try:
+            raw_output = _call_llm(
+                client,
+                master_context,
+                active_config,
+                system_prompt=SESSION_BRIEF_SYSTEM_PROMPT,
+                retry_suffix="IMPORTANT: Return only the session brief. No fences, no preamble.",
+                strict=attempt > 1,
+                stream=True,
+            )
+            if not raw_output.strip():
+                raise LLMCallError("Model returned empty output")
+            return raw_output.strip()
+        except LLMCallError as exc:
+            last_error = exc
+            logger.warning("Session brief attempt %d failed: %s", attempt, exc)
         except Exception as exc:
             raise LLMCallError(str(exc)) from exc
 
