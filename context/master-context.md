@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-04 22:56_
+_Last updated: 2026-04-05 00:10_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -59,7 +59,7 @@ It is a communication system.
 - Merge chunked outputs
 - Propagate warnings to CLI and web
 - Multi-provider LLM support (Anthropic + Gemini)
-- [Phase 4.5 implemented but not yet validated: optional --context-file for generate and commit, cartero context command, structured recap generation, recap + diff as combined LLM input, auto-detection of git diff]
+- [Phase 4.5 validated with real API calls and real diffs: optional `--context-file` for generate and commit, `cartero context`, structured recap generation, recap + diff as combined LLM input, auto-detection of git diff]
 - Defined the Phase 5 canonical documentation contract for commit summaries, changelogs, FAQs, and knowledge base entries
 - Defined the canonical record as the shared internal data model for documentation outputs
 - Defined the transformation specification from diff + context into canonical Cartero records
@@ -68,11 +68,17 @@ It is a communication system.
 - Established a sequential prompting strategy: contract -> transformation -> output layer
 - Generate product-style changelog entries from git diffs (`cartero changelog`)
 - Real-time streaming output for changelog generation (Anthropic provider)
-- Phase 4.5 validated with real API calls and real diffs
 - Generate a session brief from the master context (`cartero session`) — ready to paste into any LLM to start a working session with full project context
 - Generate changelog entries from diff via web (POST /api/changelog)
 - Retrieve session brief via web (GET /api/session)
 - Guided 4-step wizard interface at /wizard for non-technical users
+- [Commit-summary semantic quality validation for `reason` and `impact`, including deterministic normalization before retry and stronger bridge guidance in `llm.py`]
+- [Ambiguity-aware no-context fallback for docs-only, tests-only, formatting-only, and other low-signal diffs]
+- [Regression coverage for realistic commit-summary diffs and quality edge cases]
+- [Structured `commit_fields` and `quality_metadata` now flow through `SummaryGenerationResult`]
+- [CLI now consumes structured commit fields first, while YAML remains unchanged as a compatibility artifact]
+- [Web generation response now additively exposes structured fields and quality metadata alongside YAML]
+- [Readiness harness implemented with curated corpus, structured per-case and aggregate reporting, parity checks, and `cartero readiness` command]
 
 ---
 
@@ -87,14 +93,22 @@ Phase 5 (Documentation Package) in progress:
 * Parser + validation layer implemented and tested
 * `llm.py` migrated to canonical output
 * `generator.py` uses canonical record as the primary internal source of truth
+* [Commit-summary quality hardening implemented and validated: semantic validator for `reason`/`impact`, deterministic normalization before retry, stronger prompt guidance, and ambiguity-aware fallback behavior]
+* [Structured `commit_fields` and `quality_metadata` are implemented and now carried through generation results]
+* [CLI and web have partial canonical migration progress: they consume or expose structured fields first, while YAML remains as a temporary compatibility bridge]
 * YAML remains as a temporary bridge for backward compatibility
 * Master-context freshness guard implemented and validated in the real workflow
 * Commit generation now works end-to-end through the canonical → generator → YAML bridge
+* [Readiness harness implemented and validated with curated cases, aggregate quality/parity signals, and a dedicated `cartero readiness` command]
+* [Current strengths: clear-intent commit quality is strong, parity checks are passing, and ambiguous no-context cases are handled more truthfully]
+* [Current limitation: the readiness corpus is still small, so more evidence is needed before changing defaults or removing YAML]
+* [Current readiness conclusion: the system is close, but the canonical-first default switch is not yet approved]
 
 Test suite cleaned:
 
 * Replaced root `test_changelog.py` with proper mocked tests
 * Full suite passing (except known skip)
+* [Commit-quality regressions and readiness harness coverage added and passing]
 
 ## Current Priorities
 
@@ -102,24 +116,27 @@ Test suite cleaned:
 2. Remove YAML bridge and fully adopt canonical record across all surfaces
 3. Standardize output structure across commit, changelog, FAQ, and knowledge base
 4. Fix known bug: /api/session called 3x on wizard Step 4
-5. Prepare CLI/web to consume canonical record directly
-6. Phase 6 preparation: GitHub integration (error handling, confirmations)
+5. [Expand readiness evidence before switching defaults: grow the corpus, repeat measurement on more real diffs, and keep parity visible]
+6. [Reduce context friction via lightweight session notes and automatic context injection into commit generation]
+7. [Prepare CLI/web for canonical-first consumption only when readiness gates are strong enough to justify removing the YAML bridge]
+8. Phase 6 preparation: GitHub integration (error handling, confirmations)
 
 ## Next Task
 
-Continue improving output quality for commit summaries before fully migrating CLI and web to canonical record.
+[Continue readiness validation before fully migrating CLI and web to canonical-first consumption.]
 
 Focus on:
 
-* Making `reason` consistently reflect the real problem solved, not generic phrasing
-* Making `impact` consistently user-facing and outcome-driven
-* Reducing remaining technical/internal wording in commit outputs
-* Iterating with real diffs to validate improvements
+* [Expanding the readiness corpus with more representative real diffs]
+* [Validating migration gates with repeated readiness runs and more real-world cases]
+* [Confirming that clear-intent quality remains strong and that ambiguous no-context cases stay restrained and truthful]
 
 Parallel track:
 
-* Prepare CLI and web layers to consume canonical record directly
-* Plan safe removal of the YAML bridge once output quality is stable
+* [Design lightweight session-note capture (`cartero note "<text>"`, `cartero note --file <path>`) stored in `.cartero/session-notes.md`]
+* [Allow `cartero commit` to aggregate session notes automatically as commit context]
+* [If no notes exist and the diff is ambiguous, prompt for a minimal note instead of silently proceeding without useful context]
+* [Keep YAML as the compatibility artifact until readiness evidence is broader]
 
 ---
 
@@ -206,11 +223,17 @@ Every CLI function must have an equivalent web interface.
   → `impact` can still lean toward internal or technical wording instead of user-facing outcomes
   → further prompt and bridge-level quality improvements are required before the output is consistently product-level
 
+- [Commit-summary output quality is materially improved and now validated by semantic checks, normalization, and realistic regression coverage, but confidence is still limited by the current readiness corpus size]
+
+- [Ambiguity-safe no-context behavior now exists for docs-only, tests-only, formatting-only, and other low-signal diffs, but best output quality still depends on having useful context]
+
 - Automatic validation of canonical records is not yet fully enforced
   → malformed records may still pass too far through the pipeline
 
 - Context input still has friction (file-based)  
   → future improvement: inline or guided input  
+
+- [Context capture friction remains a practical bottleneck: reconstructing intent at commit time is still too manual for fast vibe coding workflows]
 
 - CLI requires multiple commands for full workflow  
   → will be simplified via interactive mode  
@@ -238,6 +261,11 @@ Every CLI function must have an equivalent web interface.
   - ambiguous diffs
   - large multi-change diffs
 
+- [Canonical-first readiness gate:]
+  - [the readiness corpus still needs to grow]
+  - [migration should be re-measured repeatedly on real diffs before switching defaults]
+  - [YAML should remain until readiness evidence is broader, not just until one good test pass]
+
 - External integrations:
   - Notion (knowledge base / marketing)
   - Docusaurus / GitHub Pages (docs + FAQ)
@@ -250,6 +278,12 @@ Every CLI function must have an equivalent web interface.
 
 - Best UX for context input:
   - file-based vs inline vs guided CLI
+
+- [Session-note capture design:]
+  - [how notes are stored in `.cartero/session-notes.md`]
+  - [when notes are auto-included in commit generation]
+  - [how users review or edit the generated recap before commit]
+  - [whether ambiguous diffs should require a minimal note when no useful context exists]
 
 - Guided CLI flow design:
   - how much structure vs flexibility
@@ -289,6 +323,8 @@ Every CLI function must have an equivalent web interface.
 - Introduce reusable templates for different output types
 - Replace JSON output with plain-text delimiter format — use structured plain-text with custom markers instead of JSON. Parse fields with regex in-memory. Eliminates parse failures across all generation flows and unblocks reliable output for GitHub integration, guided CLI, and web UI.
 - [Migration to plain-text delimiter format is a hard prerequisite for the Documentation Package. Do not attempt multi-output generation over the current JSON/YAML pipeline — JSON is too rigid for extended marketing and FAQ text blocks and will cause token overflow and escape errors. The canonical contract must be defined and validated before any output surface is built on top of it.]
+- [Structured commit-summary metadata now exists (`commit_fields`, `quality_metadata`), and CLI/web structured-first consumption is partially implemented while YAML remains for compatibility]
+- [Readiness harness now exists to evaluate migration safety through curated cases, quality signals, and parity checks before any default switch]
 
 ### Phase 6 — GitHub Integration
 
@@ -446,6 +482,16 @@ Strategic relevance:
 - Propose updates with confidence levels
 - Never apply automatically
 
+#### X.9 — Session Notes Capture & Context Injection
+
+- [Enable lightweight note capture during a session]
+- [Support `cartero note "<text>"` and `cartero note --file <path>` as the likely first step]
+- [Store notes in `.cartero/session-notes.md`]
+- [Automatically reuse session notes as commit context during `cartero commit`]
+- [If a diff is ambiguous and no useful notes exist, prompt for a minimal note instead of silently proceeding]
+- [Future API / MCP integrations can push notes into Cartero automatically]
+- [This supports vibe coding workflows by reducing manual context-file creation and making context collection near-frictionless]
+
 ### Additional System Rule
 
 Cartero must remain usable across:
@@ -464,6 +510,7 @@ Cartero evolves from:
 into:
 
 - a system that continuously maintains alignment between code, context, and LLM workflows
+
 ---
 
 ## 10. Working Methodology
@@ -482,6 +529,12 @@ Every working session with Cartero follows this flow:
 Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
 
 This creates an observable history of how Cartero's LLM output quality improves with each phase.
+
+### [Evidence-Driven Quality & Context Capture]
+
+- [Cartero performs best when context is captured during the work itself, not reconstructed at the end of the session]
+- [Ambiguous diffs should not silently proceed without context when a short note would materially improve output quality]
+- [Compatibility migrations should remain evidence-driven: add observability, validate parity, expand the corpus, then consider switching defaults]
 
 ### LLM Interaction Rules
 - LLM outputs are Codex prompts by default. Code is only produced when explicitly requested
@@ -523,6 +576,7 @@ cartero commit
 cartero commit --context-file <path>  
 cartero context  
 cartero session  
+[cartero readiness]  
 
 ---
 
@@ -545,6 +599,7 @@ Files are named using date + UUID and never overwrite each other.
 - cartero/config.py — configuration  
 - cartero/cli.py — CLI entrypoint  
 - cartero/web.py — Flask API  
+- [cartero/readiness.py — curated readiness corpus execution, aggregate reporting, and parity checks]  
 - cartero/validator.py — YAML validation  
 - cartero/executor.py — apply changes  
 - cartero/simulator.py — dry-run  
@@ -564,7 +619,7 @@ Files are named using date + UUID and never overwrite each other.
 
 ### Test Coverage
 
-Test coverage expanded significantly across canonical parsing, context-state guards, CLI behavior, commit flow, and changelog generation.
+[Test coverage expanded significantly across canonical parsing, context-state guards, CLI behavior, commit flow, changelog generation, commit-quality regressions, and the readiness harness.]
 
 ---
 

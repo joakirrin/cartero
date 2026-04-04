@@ -1,0 +1,15 @@
+diff --git a/cartero/cli.py b/cartero/cli.py
+index 1111111..2222222 100644
+--- a/cartero/cli.py
++++ b/cartero/cli.py
+@@ -90,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
+     generate_parser.add_argument(
+         "--stdin",
+         action="store_true",
+         help="Read the diff from stdin instead of detecting it from git.",
+     )
++    generate_parser.add_argument(
++        "--context-file",
++        metavar="PATH",
++        help="Optional path to raw context. Cartero will compress it before generation.",
++    )

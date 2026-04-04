@@ -66,3 +66,18 @@ To persist it in `zsh`, add the same line to `~/.zshrc` and reload your shell.
 
 Integration tests marked with `integration` skip when `ANTHROPIC_API_KEY` is not configured.
 Missing credentials now fail fast with a configuration error instead of falling back to a fake key.
+
+## Readiness Harness
+
+Run the curated readiness corpus with:
+
+```bash
+cartero readiness
+```
+
+The command prints a JSON report with one entry per case plus an aggregate summary.
+Use `summary.total_cases`, `summary.fail_level_count`, and `summary.warn_level_count` for the headline signal.
+Use `summary.fallback_frequency`, `summary.retry_frequency`, and `summary.normalization_frequency` to see how often the current pipeline had to lean on safety rails.
+Use `summary.parity` to confirm the structured `commit_fields` still align with YAML-backed behavior and the web/CLI surfaces.
+
+The command exits with code `1` when the report contains fail-level cases or parity mismatches, so it can be used as a lightweight gating check.

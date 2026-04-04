@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -36,6 +37,7 @@ from cartero.llm import (
     generate_changelog,
     generate_session_brief,
 )
+from cartero.readiness import run_readiness_harness
 from cartero.parser import ParseError, load_summary
 from cartero.simulator import SimulatedAction, simulate_actions
 from cartero.validator import ALLOWED_REPOS, Change, ValidationError, validate_summary
@@ -184,6 +186,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate a session brief from the master context.",
     )
     session_parser.set_defaults(handler=handle_session)
+
+    readiness_parser = subparsers.add_parser(
+        "readiness",
+        prog="cartero readiness",
+        help="Run the curated readiness harness and print a structured report.",
+    )
+    readiness_parser.set_defaults(handler=handle_readiness)
     return parser
 
 
@@ -263,6 +272,18 @@ def handle_changelog(
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
 
+    return 0
+
+
+def handle_readiness(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    del args, error_console
+    report = run_readiness_harness()
+    report_payload = report.to_dict()
+    console.print(json.dumps(report_payload, indent=2), markup=False)
+    if report_payload.get("summary", {}).get("overall_status") == "fail":
+        return 1
     return 0
 
 
@@ -585,6 +606,7 @@ def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
         "commit",
         "changelog",
         "session",
+        "readiness",
     }
     if args and args[0] in SUBCOMMANDS:
         return args

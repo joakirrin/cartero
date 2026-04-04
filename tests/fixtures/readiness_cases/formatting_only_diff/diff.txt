@@ -1,0 +1,7 @@
+diff --git a/cartero/cli.py b/cartero/cli.py
+index 1111111..2222222 100644
+--- a/cartero/cli.py
++++ b/cartero/cli.py
+@@ -12,2 +12,2 @@ VALID_MODES = {"dry-run", "apply"}
+-    return mode
++  return mode

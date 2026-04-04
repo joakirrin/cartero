@@ -79,6 +79,8 @@ class CommitQualityRegressionTests(unittest.TestCase):
 
         payload = yaml.safe_load(result.yaml_text)
         self.assertIn("did not have a reliable way", payload["reason"])
+        self.assertFalse(result.quality_metadata["used_fallback_reason"])
+        self.assertFalse(result.quality_metadata["used_fallback_impact"])
         self.assertEqual(
             validate_commit_summary_quality(
                 summary=payload["summary"],
@@ -138,8 +140,145 @@ class CommitQualityRegressionTests(unittest.TestCase):
             )
 
         payload = yaml.safe_load(result.yaml_text)
-        self.assertTrue(payload["reason"].startswith("Before this change,"))
-        self.assertIn("developers can now", payload["impact"].lower())
+        self.assertEqual(
+            payload["reason"],
+            "Before this change, this area was described less consistently.",
+        )
+        self.assertEqual(
+            payload["impact"],
+            "Developers can now review this area with less ambiguity.",
+        )
+        self.assertTrue(result.quality_metadata["used_fallback_reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_impact"])
+        self.assertNotIn("workflow was less clear", payload["reason"].lower())
+        self.assertNotIn("understand the change more clearly", payload["impact"].lower())
+        self.assertNotEqual(
+            validate_commit_summary_quality(
+                summary=payload["summary"],
+                reason=payload["reason"],
+                impact=payload["impact"],
+            ).status,
+            "fail",
+        )
+
+    def test_docs_only_diff_without_context_uses_documentation_specific_fallbacks(self) -> None:
+        diff_text = (
+            "diff --git a/README.md b/README.md\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/README.md\n"
+            "+++ b/README.md\n"
+            "@@ -1,4 +1,4 @@\n"
+            "-Run `cartero generate` from the repo root.\n"
+            "+Run `cartero generate` from the project root.\n"
+        )
+        canonical_result = _canonical_result(
+            "Cartero now clarifies README guidance for local generation.",
+            "Cartero now clarifies README guidance for local generation.",
+        )
+
+        with patch(
+            "cartero.generator.llm.generate_canonical_record_result",
+            return_value=canonical_result,
+        ):
+            result = generate_summary_result_from_diff(
+                diff_text,
+                config=self.BASE_CONFIG,
+            )
+
+        payload = yaml.safe_load(result.yaml_text)
+        self.assertEqual(
+            payload["reason"],
+            "Before this change, the documentation around this behavior was easier to misread.",
+        )
+        self.assertEqual(
+            payload["impact"],
+            "Developers can now review the documentation with less ambiguity.",
+        )
+        self.assertTrue(result.quality_metadata["used_fallback_reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_impact"])
+        self.assertNotIn("README guidance", payload["impact"])
+        self.assertNotEqual(
+            validate_commit_summary_quality(
+                summary=payload["summary"],
+                reason=payload["reason"],
+                impact=payload["impact"],
+            ).status,
+            "fail",
+        )
+
+    def test_tests_only_diff_without_context_uses_expected_behavior_fallbacks(self) -> None:
+        diff_text, _ = _read_case("tests_only")
+        canonical_result = _canonical_result(
+            "Cartero now keeps test expectations aligned with the latest output shape.",
+            "Cartero now keeps test expectations aligned with the latest output shape.",
+        )
+
+        with patch(
+            "cartero.generator.llm.generate_canonical_record_result",
+            return_value=canonical_result,
+        ):
+            result = generate_summary_result_from_diff(
+                diff_text,
+                config=self.BASE_CONFIG,
+            )
+
+        payload = yaml.safe_load(result.yaml_text)
+        self.assertEqual(
+            payload["reason"],
+            "Before this change, the expected behavior was less clearly captured in supporting tests.",
+        )
+        self.assertEqual(
+            payload["impact"],
+            "Developers can now review the expected behavior with less ambiguity.",
+        )
+        self.assertTrue(result.quality_metadata["used_fallback_reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_impact"])
+        self.assertNotIn("output shape", payload["impact"])
+        self.assertNotEqual(
+            validate_commit_summary_quality(
+                summary=payload["summary"],
+                reason=payload["reason"],
+                impact=payload["impact"],
+            ).status,
+            "fail",
+        )
+
+    def test_formatting_only_diff_without_context_uses_visual_consistency_fallbacks(self) -> None:
+        diff_text = (
+            "diff --git a/cartero/cli.py b/cartero/cli.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/cartero/cli.py\n"
+            "+++ b/cartero/cli.py\n"
+            "@@ -10,2 +10,2 @@\n"
+            "-    return value\n"
+            "+  return value\n"
+        )
+        canonical_result = _canonical_result(
+            "Cartero now keeps CLI formatting more consistent.",
+            "Cartero now keeps CLI formatting more consistent.",
+        )
+
+        with patch(
+            "cartero.generator.llm.generate_canonical_record_result",
+            return_value=canonical_result,
+        ):
+            result = generate_summary_result_from_diff(
+                diff_text,
+                config=self.BASE_CONFIG,
+            )
+
+        payload = yaml.safe_load(result.yaml_text)
+        self.assertEqual(
+            payload["reason"],
+            "Before this change, this area was formatted less consistently.",
+        )
+        self.assertEqual(
+            payload["impact"],
+            "Developers can now scan this area with less visual ambiguity.",
+        )
+        self.assertTrue(result.quality_metadata["used_fallback_reason"])
+        self.assertTrue(result.quality_metadata["used_fallback_impact"])
+        self.assertNotIn("formatting more consistent", payload["impact"].lower())
         self.assertNotEqual(
             validate_commit_summary_quality(
                 summary=payload["summary"],

@@ -1,0 +1,19 @@
+Goal:
+Improve commit-summary quality and validate readiness for canonical-first migration.
+
+User problem:
+Commit summaries could be generic or too technical, especially without context, making it hard to understand the real problem and impact.
+
+Decisions:
+- implemented semantic validation and normalization for reason/impact
+- added ambiguity-aware fallback for low-signal diffs
+- introduced structured commit_fields and quality_metadata
+- migrated CLI/web to structured-first consumption
+- implemented readiness harness with curated corpus and metrics
+
+Tradeoffs:
+- kept YAML bridge for compatibility instead of removing it early
+- limited readiness validation to a small corpus for now
+
+User impact:
+Developers get clearer, more reliable commit summaries, with better handling of ambiguous changes and improved confidence in output quality.

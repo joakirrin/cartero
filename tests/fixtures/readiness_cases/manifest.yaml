@@ -1,0 +1,32 @@
+cases:
+  - name: clear_intent_with_context
+    case_type: clear_intent
+    diff_path: ../extreme_cases/partial_rollout/diff.txt
+    context_path: ../extreme_cases/partial_rollout/context.txt
+    clear_intent: true
+  - name: clear_intent_without_context
+    case_type: clear_intent
+    diff_path: clear_intent_without_context/diff.txt
+    clear_intent: true
+  - name: docs_only_diff
+    case_type: docs_only
+    diff_path: docs_only_diff/diff.txt
+    ambiguous_expected: true
+  - name: tests_only_diff
+    case_type: tests_only
+    diff_path: ../extreme_cases/tests_only/diff.txt
+    ambiguous_expected: true
+  - name: formatting_only_diff
+    case_type: formatting_only
+    diff_path: formatting_only_diff/diff.txt
+    ambiguous_expected: true
+  - name: ambiguous_small_diff
+    case_type: ambiguous_small
+    diff_path: ../extreme_cases/ambiguous_diff/diff.txt
+    ambiguous_expected: true
+  - name: chunked_larger_diff
+    case_type: chunked_large
+    diff_path: ../extreme_cases/many_changes/diff.txt
+    context_path: ../extreme_cases/many_changes/context.txt
+    config:
+      max_diff_tokens: 20

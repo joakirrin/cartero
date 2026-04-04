@@ -356,6 +356,16 @@ class LegacySummaryPayloadResult:
     used_fallback_impact: bool
 
 
+@dataclass(frozen=True)
+class CommitBridgeDiffAssessment:
+    file_paths: tuple[str, ...]
+    change_line_count: int
+    documentation_only: bool
+    tests_only: bool
+    formatting_only: bool
+    ambiguous: bool
+
+
 class CarteroDumper(yaml.SafeDumper):
     pass
 
@@ -573,17 +583,23 @@ def _merge_canonical_records(records: list[CanonicalRecord]) -> CanonicalRecord:
 
 def _canonical_record_to_legacy_yaml(record: CanonicalRecord) -> str:
     """Temporary bridge while downstream CLI/web paths still expect YAML."""
-    return _canonical_record_to_legacy_yaml_with_context(record, context_recap=None)
+    return _canonical_record_to_legacy_yaml_with_context(
+        record,
+        context_recap=None,
+        diff_text=None,
+    )
 
 
 def _canonical_record_to_legacy_yaml_with_context(
     record: CanonicalRecord,
     *,
     context_recap: str | None,
+    diff_text: str | None = None,
 ) -> str:
     bridge_result = build_legacy_yaml_bridge_result(
         record,
         context_recap=context_recap,
+        diff_text=diff_text,
     )
     return bridge_result.yaml_text
 
@@ -592,11 +608,13 @@ def build_legacy_yaml_bridge_result(
     record: CanonicalRecord,
     *,
     context_recap: str | None = None,
+    diff_text: str | None = None,
     retry_count: int = 0,
 ) -> LegacySummaryBridgeResult:
     payload_result = _build_legacy_summary_payload(
         record,
         context_recap=context_recap,
+        diff_text=diff_text,
     )
     semantic_result = _validate_legacy_summary_payload(payload_result.payload)
     yaml_output = yaml.dump(
@@ -632,12 +650,14 @@ def render_legacy_yaml_bridge(
     record: CanonicalRecord,
     *,
     context_recap: str | None = None,
+    diff_text: str | None = None,
 ) -> str:
     """Temporary public bridge while callers migrate away from YAML."""
 
     return _canonical_record_to_legacy_yaml_with_context(
         record,
         context_recap=context_recap,
+        diff_text=diff_text,
     )
 
 
@@ -645,23 +665,24 @@ def _build_legacy_summary_payload(
     record: CanonicalRecord,
     *,
     context_recap: str | None,
+    diff_text: str | None,
 ) -> LegacySummaryPayloadResult:
     summary = _normalize_commit_field(record.summary, max_chars=140)
     recap_sections = _parse_context_recap_sections(context_recap)
+    diff_assessment = _assess_commit_bridge_diff(diff_text)
     reason_source = recap_sections.get("User problem")
     used_fallback_reason = reason_source is None
     if reason_source is None:
+        fallback_reason = _fallback_reason_for_diff_assessment(diff_assessment)
         reason_source = (
             recap_sections.get("Explanation for non-technical users")
-            or "Before this change, the workflow was less clear for users."
+            or fallback_reason
         )
     impact_source = recap_sections.get("Expected user-visible outcome")
     used_fallback_impact = impact_source is None
     if impact_source is None:
-        impact_source = (
-            _first_commit_sentence(record.changelog)
-            or summary
-        )
+        fallback_impact = _fallback_impact_for_diff_assessment(diff_assessment)
+        impact_source = fallback_impact or _first_commit_sentence(record.changelog) or summary
     reason = _normalize_commit_field(reason_source, max_chars=180)
     impact = _normalize_commit_field(impact_source, max_chars=180)
     normalized_fields = normalize_commit_summary_fields(
@@ -721,6 +742,158 @@ def _parse_context_recap_sections(context_recap: str | None) -> dict[str, str]:
         for header, lines in sections.items()
         if lines
     }
+
+
+def _assess_commit_bridge_diff(diff_text: str | None) -> CommitBridgeDiffAssessment:
+    if not diff_text or not diff_text.strip():
+        return CommitBridgeDiffAssessment(
+            file_paths=(),
+            change_line_count=0,
+            documentation_only=False,
+            tests_only=False,
+            formatting_only=False,
+            ambiguous=True,
+        )
+
+    file_paths = tuple(_extract_diff_paths(diff_text))
+    added_lines, removed_lines = _extract_changed_line_pairs(diff_text)
+    changed_content_lines = [
+        line[1:].strip()
+        for line in diff_text.splitlines()
+        if line.startswith(("+", "-"))
+        and not line.startswith(("+++", "---"))
+        and line[1:].strip()
+    ]
+    documentation_only = bool(file_paths) and all(_is_documentation_like_path(path) for path in file_paths)
+    tests_only = bool(file_paths) and all(_is_test_like_path(path) for path in file_paths)
+    formatting_only = _is_formatting_only_change(added_lines=added_lines, removed_lines=removed_lines)
+    low_change_volume = len(changed_content_lines) <= 6
+    low_signal_lines = bool(changed_content_lines) and all(
+        _is_low_signal_change_line(line) for line in changed_content_lines
+    )
+    ambiguous = (
+        documentation_only
+        or tests_only
+        or formatting_only
+        or (low_change_volume and low_signal_lines)
+    )
+    return CommitBridgeDiffAssessment(
+        file_paths=file_paths,
+        change_line_count=len(changed_content_lines),
+        documentation_only=documentation_only,
+        tests_only=tests_only,
+        formatting_only=formatting_only,
+        ambiguous=ambiguous,
+    )
+
+
+def _extract_diff_paths(diff_text: str) -> list[str]:
+    paths: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("+++ b/"):
+            path = line[6:].strip()
+            if path and path != "/dev/null":
+                paths.append(path)
+    return paths
+
+
+def _extract_changed_line_pairs(diff_text: str) -> tuple[list[str], list[str]]:
+    added_lines: list[str] = []
+    removed_lines: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added_lines.append(line[1:])
+        elif line.startswith("-"):
+            removed_lines.append(line[1:])
+    return added_lines, removed_lines
+
+
+def _is_documentation_like_path(path: str) -> bool:
+    lower_path = path.lower()
+    name = Path(lower_path).name
+    return (
+        lower_path.startswith("docs/")
+        or lower_path.startswith("context/")
+        or name in {"readme", "readme.md", "readme.rst", "changelog.md"}
+        or lower_path.endswith((".md", ".mdx", ".rst", ".txt", ".adoc"))
+    )
+
+
+def _is_test_like_path(path: str) -> bool:
+    lower_path = path.lower()
+    return (
+        lower_path.startswith("tests/")
+        or "/tests/" in lower_path
+        or "/fixtures/" in lower_path
+        or lower_path.endswith(("_test.py", "_spec.py"))
+        or lower_path.endswith(".snap")
+    )
+
+
+def _is_low_signal_change_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if len(stripped) > 120:
+        return False
+    if _looks_like_code_style_identifier(stripped):
+        return True
+    if re.search(r'"[^"]+"|\'[^\']+\'', stripped):
+        return True
+    if re.match(r"^(def|class)\s+[A-Za-z0-9_]+", stripped):
+        return True
+    if re.match(r"^[A-Z0-9_]+\s*=", stripped):
+        return True
+    if re.match(r"^(return|assert)\b", stripped):
+        return True
+    if re.match(r"^[A-Za-z0-9_.:/-]+$", stripped):
+        return True
+    return False
+
+
+def _looks_like_code_style_identifier(text: str) -> bool:
+    return bool(re.search(r"[a-z0-9_]+\.[a-z0-9_]+|`[^`]+`|[a-z_]+\(\)", text))
+
+
+def _is_formatting_only_change(*, added_lines: list[str], removed_lines: list[str]) -> bool:
+    if not added_lines and not removed_lines:
+        return False
+    if len(added_lines) != len(removed_lines):
+        return False
+    return all(
+        _normalize_formatting_line(added) == _normalize_formatting_line(removed)
+        for added, removed in zip(added_lines, removed_lines)
+    )
+
+
+def _normalize_formatting_line(line: str) -> str:
+    return " ".join(line.split())
+
+
+def _fallback_reason_for_diff_assessment(assessment: CommitBridgeDiffAssessment) -> str:
+    if assessment.documentation_only:
+        return "Before this change, the documentation around this behavior was easier to misread."
+    if assessment.tests_only:
+        return "Before this change, the expected behavior was less clearly captured in supporting tests."
+    if assessment.formatting_only:
+        return "Before this change, this area was formatted less consistently."
+    if assessment.ambiguous:
+        return "Before this change, this area was described less consistently."
+    return "Before this change, the change was harder to interpret from the diff alone."
+
+
+def _fallback_impact_for_diff_assessment(assessment: CommitBridgeDiffAssessment) -> str | None:
+    if assessment.documentation_only:
+        return "Developers can now review the documentation with less ambiguity."
+    if assessment.tests_only:
+        return "Developers can now review the expected behavior with less ambiguity."
+    if assessment.formatting_only:
+        return "Developers can now scan this area with less visual ambiguity."
+    if assessment.ambiguous:
+        return "Developers can now review this area with less ambiguity."
+    return None
 
 
 def _first_commit_sentence(text: str) -> str:
@@ -1235,6 +1408,7 @@ def generate_commit_summary_result(
     bridge_result = build_legacy_yaml_bridge_result(
         canonical_result.record,
         context_recap=context_recap,
+        diff_text=diff_text,
         retry_count=canonical_result.retry_count,
     )
     return LLMGenerationResult(

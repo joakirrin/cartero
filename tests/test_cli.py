@@ -248,6 +248,54 @@ class CliTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
+    def test_readiness_command_prints_structured_report(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch(
+            "cartero.cli.run_readiness_harness",
+            return_value=type(
+                "FakeReport",
+                (),
+                {
+                    "to_dict": lambda self: {
+                        "generated_at": "2026-04-04T10:00:00+00:00",
+                        "cases": [],
+                        "summary": {"overall_status": "pass", "total_cases": 7},
+                    }
+                },
+            )(),
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(["readiness"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn('"overall_status": "pass"', stdout.getvalue())
+        self.assertIn('"total_cases": 7', stdout.getvalue())
+
+    def test_readiness_command_returns_nonzero_when_report_fails(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch(
+            "cartero.cli.run_readiness_harness",
+            return_value=type(
+                "FakeReport",
+                (),
+                {
+                    "to_dict": lambda self: {
+                        "generated_at": "2026-04-04T10:00:00+00:00",
+                        "cases": [],
+                        "summary": {"overall_status": "fail", "total_cases": 7},
+                    }
+                },
+            )(),
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(["readiness"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_generate_with_empty_diff_and_context_is_conservative(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

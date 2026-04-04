@@ -1,0 +1,7 @@
+diff --git a/README.md b/README.md
+index 1111111..2222222 100644
+--- a/README.md
++++ b/README.md
+@@ -22,7 +22,7 @@ Cartero is evolving from a commit tool into a full system for turning code into
+-* Optional context support — provide notes or conversations to improve output quality
++* Optional context support — provide notes, conversations, or session recaps to improve output quality

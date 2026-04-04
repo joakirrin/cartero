@@ -70,6 +70,7 @@ def generate_summary_result_from_diff(
             bridge_result = llm.build_legacy_yaml_bridge_result(
                 canonical_result.record,
                 context_recap=context_recap,
+                diff_text=diff_text,
                 retry_count=total_retry_count,
             )
             return SummaryGenerationResult(

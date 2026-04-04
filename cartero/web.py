@@ -100,15 +100,7 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         except (LLMConfigError, LLMCallError) as exc:
             return jsonify({"error": str(exc)}), 500
-        payload = {
-            "yaml": result.yaml_text,
-            "canonical_text": result.canonical_text,
-            "commit_fields": result.commit_fields,
-            "quality": result.quality_metadata,
-        }
-        if result.warning_message:
-            payload["warning"] = result.warning_message
-        return jsonify(payload), 200
+        return jsonify(build_generate_payload(result)), 200
 
     @app.route("/api/changelog", methods=["POST"])
     def api_changelog() -> tuple[Any, int]:
@@ -184,6 +176,18 @@ def _load_summary_text(raw_text: str) -> dict[str, Any]:
         raise ParseError("Summary root must be a YAML mapping.")
 
     return loaded
+
+
+def build_generate_payload(result: Any) -> dict[str, Any]:
+    payload = {
+        "yaml": result.yaml_text,
+        "canonical_text": result.canonical_text,
+        "commit_fields": result.commit_fields,
+        "quality": result.quality_metadata,
+    }
+    if result.warning_message:
+        payload["warning"] = result.warning_message
+    return payload
 
 
 def _render_output(*, mode: str, actions: Any) -> str:
