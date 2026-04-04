@@ -1,0 +1,22 @@
+Goal: restore normal CLI behavior when running Cartero through python -m cartero.cli.
+
+User problem:
+- explicit CLI commands such as generate --help and generate with diff/context could exit successfully but print nothing
+- this made Cartero appear to run correctly while producing no visible output
+- the regression reduced trust in CLI-based testing and real usage
+
+Key decisions:
+- add the missing module entrypoint so python -m cartero.cli executes main()
+- preserve interactive behavior for the no-args case
+- add regression tests covering help output and generate output through the real module entrypoint path
+
+Tradeoffs:
+- the fix stays narrow and focused on restoring expected command-line execution
+- no broader CLI redesign is introduced in this change
+
+Expected user-visible outcome:
+- Cartero now prints help text correctly when called through python -m cartero.cli generate --help
+- Cartero now prints generated output normally when called through python -m cartero.cli generate with explicit inputs
+
+Explanation for non-technical users:
+- Cartero’s command-line entrypoint now behaves correctly again, so running it directly from Python shows help and generated results as expected.

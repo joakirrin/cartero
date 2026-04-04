@@ -128,6 +128,24 @@ Explanation for non-technical users:
 Do not add markdown fences, bullets outside the sections, or extra text.
 """
 
+CHANGELOG_SYSTEM_PROMPT = """You are Cartero's changelog generator.
+
+Given a git diff and optional context, write a changelog entry for a product audience.
+
+Rules:
+- Write for end users, not developers
+- Use product release note style (Notion / Linear)
+- Start with a one-line headline summarizing what's new
+- Follow with 2-4 bullet points of concrete user-facing changes
+- Do not use git verbs: fix, refactor, chore, update, patch
+- Never mention file names, function names, class names, or code identifiers of any kind — not even in backticks
+- Describe capabilities in terms of what the user can do, not how it works internally
+  - Wrong: "Added `generate_changelog()` to create changelog entries"
+  - Right: "Cartero can now generate a changelog entry from any code change"
+- If context is provided, use it to understand intent and user impact
+- Return only the changelog text, no markdown fences, no preamble
+"""
+
 CONTEXT_RECAP_HEADERS = (
     "Goal:",
     "User problem:",
@@ -413,8 +431,22 @@ def _call_llm_anthropic(
     system_prompt: str,
     retry_suffix: str,
     strict: bool = False,
+    stream: bool = False,
 ) -> str:
     system = system_prompt + (retry_suffix if strict else "")
+    if stream:
+        collected = []
+        with client.messages.stream(
+            model=config.model,
+            max_tokens=config.max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt_text}],
+        ) as s:
+            for text in s.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+        print()
+        return "".join(collected).strip()
     message = client.messages.create(
         model=config.model,
         max_tokens=config.max_tokens,
@@ -453,6 +485,7 @@ def _call_llm(
     system_prompt: str,
     retry_suffix: str,
     strict: bool = False,
+    stream: bool = False,
 ) -> str:
     if config.llm_provider == "anthropic":
         return _call_llm_anthropic(
@@ -462,6 +495,7 @@ def _call_llm(
             system_prompt=system_prompt,
             retry_suffix=retry_suffix,
             strict=strict,
+            stream=stream,
         )
     if config.llm_provider == "gemini":
         return _call_llm_gemini(
@@ -531,6 +565,42 @@ def generate_commit_summary(
         config,
         context_recap=context_recap,
     ).yaml_text
+
+
+def generate_changelog(
+    diff_text: str,
+    config: CarteroConfig | None = None,
+    *,
+    context_recap: str | None = None,
+) -> str:
+    active_config = config or default_config
+    client = _get_client(active_config)
+    llm_input = _build_commit_generation_input(diff_text, context_recap=context_recap)
+    last_error: LLMCallError | None = None
+
+    for attempt in range(1, max(1, active_config.max_retries) + 1):
+        try:
+            raw_output = _call_llm(
+                client,
+                llm_input,
+                active_config,
+                system_prompt=CHANGELOG_SYSTEM_PROMPT,
+                retry_suffix="IMPORTANT: Return only the changelog text. No fences, no preamble.",
+                strict=attempt > 1,
+                stream=True,
+            )
+            if not raw_output.strip():
+                raise LLMCallError("Model returned empty output")
+            return raw_output.strip()
+        except LLMCallError as exc:
+            last_error = exc
+            logger.warning("Changelog attempt %d failed: %s", attempt, exc)
+        except Exception as exc:
+            raise LLMCallError(str(exc)) from exc
+
+    raise LLMCallError(
+        f"Failed after {max(1, active_config.max_retries)} attempts. Last error: {last_error}"
+    )
 
 
 def generate_context_recap(

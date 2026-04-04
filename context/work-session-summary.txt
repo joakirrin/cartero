@@ -1,0 +1,31 @@
+# Work Session Summary
+
+## Implemented Changes
+- Removed fallback API key ("test-key") in LLM configuration for Anthropic and Gemini.
+- Enforced explicit configuration errors (`LLMConfigError`) when API keys are missing or empty.
+- Registered pytest `integration` marker in project configuration.
+- Added integration test behavior to skip cleanly when `ANTHROPIC_API_KEY` is not configured.
+- Added tests covering missing API key, empty key, and absence of fallback behavior.
+- Added minimal documentation in README for local LLM setup and integration test behavior.
+
+## Proposed But Not Implemented
+- Resolve packaging issue affecting `uv run` (`multiple top-level packages discovered: ['cartero', 'context']`).
+- Improve developer experience for environment variable persistence across shells.
+- Add automated validation layer for canonical records.
+
+## Priority Impact
+- Increased priority on deterministic configuration handling for LLM providers.
+- Increased priority on separating offline vs integration tests clearly.
+
+## Architecture Impact
+- Strengthened LLM configuration layer by removing implicit fallback behavior.
+- Enforced early failure model for external provider dependencies.
+
+## Constraints Or Issues
+- `uv run` remains blocked due to packaging configuration issue.
+- Integration tests depend on correct local environment variable setup.
+
+## Recommended Master Context Changes
+- Document strict requirement for explicit LLM provider configuration.
+- Document separation between offline tests and integration tests.
+- Add note about current packaging limitation affecting `uv run`.

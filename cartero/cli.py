@@ -24,7 +24,7 @@ from cartero.git import (
     get_diff,
     stage_files,
 )
-from cartero.llm import LLMCallError, LLMConfigError
+from cartero.llm import LLMCallError, LLMConfigError, generate_changelog
 from cartero.parser import ParseError, load_summary
 from cartero.simulator import SimulatedAction, simulate_actions
 from cartero.validator import ALLOWED_REPOS, Change, ValidationError, validate_summary
@@ -115,6 +115,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     context_parser.set_defaults(handler=handle_context)
 
+    changelog_parser = subparsers.add_parser(
+        "changelog",
+        prog="cartero changelog",
+        help="Generate a product-style changelog entry from a git diff.",
+    )
+    changelog_diff_source = changelog_parser.add_mutually_exclusive_group()
+    changelog_diff_source.add_argument(
+        "--diff-file",
+        metavar="PATH",
+        help="Path to a file containing the diff.",
+    )
+    changelog_diff_source.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read the diff from stdin instead of detecting it from git.",
+    )
+    changelog_parser.add_argument(
+        "--context-file",
+        metavar="PATH",
+        help="Optional path to raw context. Cartero will compress it before generation.",
+    )
+    changelog_parser.set_defaults(handler=handle_changelog)
+
     commit_parser = subparsers.add_parser(
         "commit",
         prog="cartero commit",
@@ -177,6 +200,34 @@ def handle_generate(
         return exit_code
 
     console.print(result.yaml_text, markup=False, end="")
+    return 0
+
+
+def handle_changelog(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    try:
+        diff_text = _resolve_generate_diff(args)
+        raw_context = _read_optional_text_input(_get_arg_value(args, "context_file"))
+    except NoDiffError as exc:
+        console.print(str(exc))
+        return 0
+    except GitError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+    except ValueError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    try:
+        context_recap = None
+        if raw_context:
+            context_recap = generate_context_recap(raw_context)
+        result = generate_changelog(diff_text, context_recap=context_recap)
+    except (LLMConfigError, LLMCallError) as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
     return 0
 
 
@@ -426,7 +477,7 @@ def _describe_mode(mode: str) -> str:
 
 def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    SUBCOMMANDS = {"run", "generate", "context", "commit"}
+    SUBCOMMANDS = {"run", "generate", "context", "commit", "changelog"}
     if args and args[0] in SUBCOMMANDS:
         return args
     return ["run", *args]
