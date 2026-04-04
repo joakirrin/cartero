@@ -1,0 +1,22 @@
+Goal: add cartero session command to generate a session brief automatically from the master context.
+
+User problem:
+- At the start of each session, the master context had to be opened manually, read, and summarized for the LLM
+- This process was manual, slow, and prone to losing important context
+
+Key decisions:
+- generate_session_brief reads context/master-context.md and generates a structured brief via LLM
+- The brief includes: current state, strategic direction, priorities, next task, modules involved, non-negotiable rules
+- Streaming enabled same as cartero changelog
+- No flags or options — cartero session is a single-line command
+
+Tradeoffs:
+- context/master-context.md path is hardcoded — requires running the command from the repo root
+- Brief is LLM-generated, non-deterministic — but validated output quality is high
+
+Expected user-visible outcome:
+- cartero session generates a session brief ready to paste into any LLM
+- The LLM starts with full project context without manual intervention
+
+Explanation for non-technical users:
+- Cartero now automatically generates the context summary any LLM needs to start a working session without losing the thread of the project.

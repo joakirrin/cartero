@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-04 11:06_
+_Last updated: 2026-04-04 18:45_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -70,6 +70,9 @@ It is a communication system.
 - Real-time streaming output for changelog generation (Anthropic provider)
 - Phase 4.5 validated with real API calls and real diffs
 - Generate a session brief from the master context (`cartero session`) — ready to paste into any LLM to start a working session with full project context
+- Generate changelog entries from diff via web (POST /api/changelog)
+- Retrieve session brief via web (GET /api/session)
+- Guided 4-step wizard interface at /wizard for non-technical users
 
 ---
 
@@ -175,6 +178,9 @@ Every CLI function must have an equivalent web interface.
 
 - Streaming is handled inside llm.py rather than the CLI layer — architecturally not ideal but preserves the existing test suite without modification
 - test_changelog.py lives in the repo root — should be moved to tests/ or removed before production
+- Step 3 wizard UI labels ("Updating GitHub", "Updating project context") are cosmetic and do not reflect real backend calls. Must be corrected before Phase 6 connects real GitHub operations — labels must only appear when the corresponding action is actually executing
+- Phase 6 must include a success state that confirms changes were applied and that the new logs are visible on GitHub
+- Phase 6 must include an error state that surfaces the actual error message from a failed GitHub upload — silent failure is not acceptable
 
 ---
 
@@ -210,9 +216,27 @@ Every CLI function must have an equivalent web interface.
 
 ## 9. Roadmap (Full)
 
+### Phase 4.8 — Web Interface Parity
+
+- ✅ Phase 4.8 — Web Interface Parity
+- POST /api/changelog endpoint (accepts diff + optional context, returns changelog as JSON)
+- GET /api/session endpoint (returns session brief from master-context.md as JSON)
+- Flask server starts correctly via if __name__ == "__main__"
+- 89 tests passing (baseline was 48)
+
 ### Phase 5 — Documentation Package
 
+- ✅ Phase 5.1 — Wizard Web Interface
+- /wizard route implemented in web.py
+- cartero/templates/wizard.html — self-contained single-page wizard
+- 4-step guided flow: review changes → add context → generate → done
+- Integrates with POST /api/changelog and GET /api/session
+- Detects git diff automatically; shows correct state (changes/no changes)
+- Known bug: /api/session called 3x on Step 4 load — needs fix
+- Pending: full flow test with real diff, copy prompt button test
 - ✅ First output surface implemented: `cartero changelog` generates product-style changelog entries from git diffs with optional context and real-time streaming output
+- ✅ POST /api/changelog web endpoint implemented (accepts diff + optional context, returns changelog)
+- ✅ GET /api/session web endpoint implemented (returns session brief from master-context.md)
 - Improve output quality toward product-style communication (Notion / Linear level)
 - Standardize output structure and formatting
 - Ensure consistency across:
@@ -257,6 +281,13 @@ Every CLI function must have an equivalent web interface.
   - knowledge bases
 - Create a “presentation-ready” layer
 - Support structured export formats
+
+### Phase 12 — Vibe Coding Course
+
+- Extract the Cartero development methodology into a structured course
+- Content sourced from real documented sessions using Cartero itself
+- Covers: prompt design, LLM-assisted decisions, step-by-step verification, context management, and the full vibe coding loop
+- Cartero documents its own teaching method
 
 ### Phase X — Context Automation & Vibe Loop
 
@@ -363,6 +394,10 @@ Every working session with Cartero follows this flow:
 Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
 
 This creates an observable history of how Cartero's LLM output quality improves with each phase.
+
+### LLM Interaction Rules
+- LLM outputs are Codex prompts by default. Code is only produced when explicitly requested
+- Before generating any prompt, the LLM must state the plan and the facts it is pulling from context, and wait for confirmation if anything is uncertain
 
 ### Session Brief Format
 
@@ -477,3 +512,4 @@ Update this file when:
 
 ### Reminder Rule
 If significant work has been completed and this file is not updated, remind the user to update it before continuing.
+<!-- Last updated: 2026-04-04 18:45 — Session: wizard Step 3 real generation connected and validated, Phase 5.1 complete -->

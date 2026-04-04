@@ -29,9 +29,14 @@ Cartero is evolving from a commit tool into a full system for turning code into 
 
 ### What exists today
 
-* Generate structured summaries from git diffs
-* Validate and execute changes safely
-* Create commits in plain language
+* Generate structured commit summaries from git diffs (`cartero generate`)
+* Generate product-style changelog entries with real-time streaming (`cartero changelog`)
+* Generate a session brief from the master context, ready to paste into any LLM (`cartero session`)
+* Stage files and create git commits in plain language (`cartero commit`)
+* Compress raw notes or LLM conversations into structured context (`cartero context`)
+* Validate and execute structured change summaries safely (`cartero run`)
+* Optional context support — provide notes or conversations to improve output quality
+* Multi-provider LLM support (Anthropic and Gemini)
 
 ### What’s coming next
 

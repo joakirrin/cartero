@@ -161,7 +161,7 @@ multiple outputs. It is a communication system, not a commit generator.
 <only the modules relevant to the next task>
 
 ## Rules (Non-Negotiable)
-<only the rules an LLM would violate by default — keep this short>
+<include hard output rules, tone rules, architecture rules, and any LLM Interaction Rules from the Working Methodology section — keep this short, only rules an LLM would violate by default>
 
 ## End of Session
 Before closing: summarize what changed, update context/master-context.md,
