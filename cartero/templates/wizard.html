@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cartero Wizard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/iconify-icon@3.0.2/dist/iconify-icon.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&amp;display=swap" type="text/css" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --accent: #4A6FA5;
+      --bg: #F2F0EB;
+      --card: #FFFFFF;
+      --border: #E5E7EB;
+      --text: #1A1A1A;
+      --muted: #6B7280;
+      --success: #22C55E;
+      --warning: #F97316;
+      --danger: #DC2626;
+      --card-radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: auto;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      color: var(--text);
+      background-color: var(--bg);
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      letter-spacing: -0.025em;
+    }
+
+    textarea,
+    button,
+    input {
+      font: inherit;
+    }
+
+    textarea::placeholder {
+      color: rgba(107, 114, 128, 0.75);
+    }
+
+    .app-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--card-radius);
+    }
+
+    .primary-button,
+    .outline-button,
+    .text-button {
+      min-height: 44px;
+      border-radius: 12px;
+      font-weight: 600;
+      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .primary-button {
+      background: var(--accent);
+      color: #fff;
+      border: 1px solid var(--accent);
+    }
+
+    .primary-button:hover {
+      background: #3f6293;
+      border-color: #3f6293;
+    }
+
+    .outline-button {
+      background: #fff;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+
+    .outline-button:hover {
+      background: rgba(74, 111, 165, 0.04);
+    }
+
+    .text-button {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--muted);
+    }
+
+    .text-button:hover {
+      color: var(--text);
+      background: rgba(229, 231, 235, 0.5);
+    }
+
+    .step-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(74, 111, 165, 0.18);
+    }
+
+    .step-dot.active {
+      background: var(--accent);
+    }
+
+    .step-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .helper-divider {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .helper-divider::before,
+    .helper-divider::after {
+      content: "";
+      height: 1px;
+      flex: 1;
+      background: var(--border);
+    }
+
+    .dashed-box {
+      border-radius: var(--card-radius);
+      background:
+        linear-gradient(var(--card), var(--card)) padding-box,
+        repeating-linear-gradient(90deg, var(--border) 0 8px, transparent 8px 16px) top/100% 1px no-repeat,
+        repeating-linear-gradient(90deg, var(--border) 0 8px, transparent 8px 16px) bottom/100% 1px no-repeat,
+        repeating-linear-gradient(180deg, var(--border) 0 8px, transparent 8px 16px) left/1px 100% no-repeat,
+        repeating-linear-gradient(180deg, var(--border) 0 8px, transparent 8px 16px) right/1px 100% no-repeat;
+      padding: 24px;
+    }
+
+    .summary-reset {
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .summary-reset::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-reset::marker {
+      display: none;
+    }
+
+    .mono {
+      font-family: "SFMono-Regular", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    .raw-diff {
+      max-height: 200px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .task-spinner {
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    .soft-scroll::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .soft-scroll::-webkit-scrollbar-thumb {
+      background: #d1d5db;
+      border-radius: 999px;
+    }
+
+    .soft-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .copy-textarea {
+      resize: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    const API_BASE = "http://127.0.0.1:8000";
+    const HELPER_PROMPT = "Summarize what we worked on in this session. Include: what problem we were solving, what decisions we made, any tradeoffs we discussed, and what the user can now do that they couldn't before. Keep it under 200 words.";
+    const PLACEHOLDER_FILES = [
+      { path: "src/web.py", status: "Modified" },
+      { path: "tests/test_web.py", status: "Added" },
+      { path: "context/master-context.md", status: "Modified" },
+      { path: "requirements.txt", status: "Modified" }
+    ];
+    const TASK_LABELS = [
+      "Reading your changes",
+      "Writing commit summary",
+      "Writing changelog",
+      "Updating GitHub",
+      "Updating project context",
+      "Preparing your next prompt"
+    ];
+
+    const state = {
+      currentStep: 0,
+      diffText: "",
+      contextText: "",
+      changelogText: "",
+      sessionBrief: "",
+      hasChanges: false,
+      errorMessage: "",
+      rawDiffOpen: false,
+      changelogCopied: false,
+      helperCopied: false,
+      sessionCopied: false,
+      isLoadingDiff: false,
+      tasks: TASK_LABELS.map((label) => ({ label, status: "pending" })),
+      generationToken: 0,
+      isGenerating: false
+    };
+    let diffRequestPromise = null;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
+    function setError(message) {
+      state.errorMessage = message || "";
+    }
+
+    function clearError() {
+      state.errorMessage = "";
+    }
+
+    function fallbackSessionBrief() {
+      return "Could not prepare a fresh session brief. Review the error banner above, then retry when the Cartero backend is available.";
+    }
+
+    function fallbackChangelog() {
+      return "Could not prepare a changelog preview. Review the error banner above, then retry when the Cartero backend is available.";
+    }
+
+    function parseDiffFiles(diffText) {
+      if (!diffText || !diffText.trim()) {
+        return [];
+      }
+
+      const files = [];
+      const lines = diffText.split("\n");
+      let current = null;
+
+      function pushCurrent() {
+        if (!current || !current.path) {
+          return;
+        }
+        files.push({
+          path: current.path.replace(/^["']|["']$/g, ""),
+          status: current.status || "Modified"
+        });
+      }
+
+      for (const line of lines) {
+        if (line.startsWith("diff --git ")) {
+          pushCurrent();
+          const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+          current = {
+            path: match ? match[2] : "",
+            status: "Modified"
+          };
+          continue;
+        }
+
+        if (!current) {
+          continue;
+        }
+
+        if (line.startsWith("new file mode ")) {
+          current.status = "Added";
+        } else if (line.startsWith("deleted file mode ")) {
+          current.status = "Deleted";
+        } else if (line.startsWith("rename to ")) {
+          current.path = line.replace("rename to ", "").trim();
+        } else if (line.startsWith("+++ /dev/null")) {
+          current.status = "Deleted";
+        } else if (line.startsWith("--- /dev/null")) {
+          current.status = "Added";
+        }
+      }
+
+      pushCurrent();
+
+      const deduped = new Map();
+      for (const file of files) {
+        deduped.set(file.path, file);
+      }
+
+      return Array.from(deduped.values());
+    }
+
+    function getChangedFiles() {
+      const parsedFiles = parseDiffFiles(state.diffText);
+      if (parsedFiles.length > 0) {
+        return parsedFiles;
+      }
+      return PLACEHOLDER_FILES;
+    }
+
+    function getRealChangedFileCount() {
+      return parseDiffFiles(state.diffText).length;
+    }
+
+    function getDisplayedFileCount() {
+      const count = getRealChangedFileCount();
+      return count > 0 ? count : PLACEHOLDER_FILES.length;
+    }
+
+    function updateDiffState(diffText) {
+      state.diffText = typeof diffText === "string" ? diffText : "";
+      state.hasChanges = state.diffText.trim().length > 0;
+    }
+
+    function formatFileCountLabel(count) {
+      return count === 1 ? "1 file changed" : count + " files changed";
+    }
+
+    function renderStepDots(activeCount) {
+      return `
+        <div class="flex flex-col items-center gap-3 mb-10">
+          <div class="flex items-center gap-2">
+            ${Array.from({ length: 4 }, (_, index) => `
+              <div class="step-dot ${index < activeCount ? "active" : ""}"></div>
+            `).join("")}
+          </div>
+          <div class="step-label">Step ${activeCount} of 4</div>
+        </div>
+      `;
+    }
+
+    function renderTopBar() {
+      const fileCount = getDisplayedFileCount();
+      const hasChanges = state.hasChanges;
+      const statusText = hasChanges ? formatFileCountLabel(fileCount) : "No changes detected";
+      const dotColor = hasChanges ? "var(--warning)" : "var(--success)";
+      const pillBg = hasChanges ? "rgba(249, 115, 22, 0.10)" : "rgba(34, 197, 94, 0.10)";
+      const pillText = hasChanges ? "var(--warning)" : "var(--success)";
+
+      return `
+        <div class="sticky top-0 z-50 bg-white">
+          <header class="border-b border-[#E5E7EB] bg-white">
+            <div class="mx-auto flex min-h-[72px] max-w-[1120px] items-center gap-4 px-4 md:px-6">
+              <div class="flex flex-1 items-center gap-2">
+                <iconify-icon icon="lucide:mail" width="20" height="20" style="color: var(--accent);"></iconify-icon>
+                <span class="text-[20px] font-bold tracking-tight text-[#4A6FA5]">Cartero</span>
+              </div>
+              <div class="hidden flex-1 text-center md:block">
+                <span class="text-[15px] font-medium text-[#1A1A1A]">casadora-core</span>
+              </div>
+              <div class="flex flex-1 justify-end">
+                <div class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold" style="background: ${pillBg}; color: ${pillText};">
+                  <span class="status-dot" style="background: ${dotColor};"></span>
+                  <span class="whitespace-nowrap">${escapeHtml(statusText)}</span>
+                </div>
+              </div>
+            </div>
+          </header>
+          ${state.errorMessage ? `
+            <div class="border-b border-red-200 bg-red-50">
+              <div class="mx-auto max-w-[1120px] px-4 py-3 text-sm text-red-700 md:px-6">
+                ${escapeHtml(state.errorMessage)}
+              </div>
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }
+
+    function renderHome() {
+      const hasChanges = state.hasChanges;
+      const count = getDisplayedFileCount();
+
+      return `
+        <main class="mx-auto flex w-full max-w-[1120px] flex-1 flex-col px-4 py-10 md:px-6 md:py-14">
+          <div class="flex flex-1 items-center justify-center">
+            <div class="app-card w-full max-w-[560px] px-6 py-8 text-center shadow-sm md:px-10 md:py-10">
+              <div class="mb-8 flex justify-center">
+                <div class="relative">
+                  <div class="flex h-20 w-20 items-center justify-center rounded-full bg-[#4A6FA5]/10">
+                    <iconify-icon icon="${hasChanges ? "lucide:file-text" : "lucide:check"}" width="36" height="36" style="color: ${hasChanges ? "#4A6FA5" : "#22C55E"};"></iconify-icon>
+                  </div>
+                  ${hasChanges ? `
+                    <div class="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border-4 border-white bg-[#F97316] text-[13px] font-bold text-white">
+                      ${count}
+                    </div>
+                  ` : ""}
+                </div>
+              </div>
+              <h1 class="mb-3 text-[30px] font-semibold leading-tight text-[#1A1A1A]">
+                ${hasChanges ? "You have changes ready to document." : "You're all caught up."}
+              </h1>
+              <p class="mx-auto mb-8 max-w-[380px] text-[16px] leading-7 text-[#6B7280]">
+                ${hasChanges
+                  ? `Cartero found updates in ${count} ${count === 1 ? "file" : "files"}. This takes about 2 minutes.`
+                  : "No changes detected in casadora-core. Come back after your next coding session."}
+              </p>
+              <button
+                type="button"
+                data-action="${hasChanges ? "start" : "get-session-prompt"}"
+                ${state.isGenerating ? "disabled" : ""}
+                class="${hasChanges ? "primary-button" : "outline-button"} w-full px-5 text-[16px] ${state.isGenerating ? "opacity-50 cursor-not-allowed" : ""}"
+              >
+                ${hasChanges ? "Start →" : state.isGenerating ? "Loading…" : "Get session prompt →"}
+              </button>
+              <div class="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  data-action="refresh-changes"
+                  ${state.isLoadingDiff ? "disabled" : ""}
+                  class="text-button px-4 text-[14px] ${state.isLoadingDiff ? "opacity-50 cursor-not-allowed" : ""}"
+                >
+                  ${state.isLoadingDiff ? "Refreshing…" : "Refresh changes"}
+                </button>
+              </div>
+              <div class="my-8 h-px bg-[#E5E7EB]"></div>
+              <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[#6B7280]">
+                <div class="flex items-center gap-2">
+                  <iconify-icon icon="lucide:clock-3" width="15" height="15"></iconify-icon>
+                  <span>~2 Mins</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <iconify-icon icon="lucide:sparkles" width="15" height="15"></iconify-icon>
+                  <span>AI Guided</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <iconify-icon icon="lucide:git-branch" width="15" height="15"></iconify-icon>
+                  <span>Git Ready</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <footer class="pt-10 text-center">
+            <div class="mb-4 flex flex-wrap items-center justify-center gap-2 text-sm text-[#6B7280]">
+              <a href="#" class="hover:text-[#1A1A1A]">Help &amp; Documentation</a>
+              <span>·</span>
+              <a href="#" class="hover:text-[#1A1A1A]">Configure Repository</a>
+              <span>·</span>
+              <a href="#" class="hover:text-[#1A1A1A]">Feedback</a>
+            </div>
+            <div class="text-[12px] font-medium uppercase tracking-[0.16em] text-[#6B7280]">
+              CARTERO V1.0.4 — DESIGNED FOR VIBE CODERS
+            </div>
+          </footer>
+        </main>
+      `;
+    }
+
+    function renderStepOne() {
+      const files = getChangedFiles();
+      const rawDiffText = state.diffText.trim() ? state.diffText : "No raw diff available.";
+
+      return `
+        <main class="mx-auto w-full max-w-[1120px] flex-1 px-4 py-10 md:px-6 md:py-14">
+          <div class="mx-auto max-w-[760px]">
+            ${renderStepDots(1)}
+            <div class="mb-12 text-center">
+              <h1 class="mb-3 text-[34px] font-semibold leading-tight text-[#1A1A1A]">Here's what changed.</h1>
+              <p class="text-[18px] text-[#6B7280]">We detected updates in your repository since the last session.</p>
+            </div>
+
+            <div class="app-card mx-auto w-full max-w-[640px] overflow-hidden shadow-sm">
+              <div class="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F8F7F4] px-5 py-3">
+                <span class="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#6B7280]">File Path</span>
+                <span class="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#6B7280]">Status</span>
+              </div>
+              <div class="divide-y divide-[#E5E7EB]">
+                ${files.map((file) => {
+                  const statusStyle = file.status === "Added"
+                    ? "background: rgba(34, 197, 94, 0.10); color: #22C55E;"
+                    : file.status === "Deleted"
+                      ? "background: rgba(239, 68, 68, 0.10); color: #EF4444;"
+                      : "background: rgba(74, 111, 165, 0.10); color: #4A6FA5;";
+                  return `
+                    <div class="flex items-center justify-between gap-4 px-5 py-4">
+                      <div class="mono min-w-0 text-sm text-[#1A1A1A]">${escapeHtml(file.path)}</div>
+                      <span class="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold" style="${statusStyle}">
+                        ${escapeHtml(file.status)}
+                      </span>
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            </div>
+
+            <div class="mx-auto mt-5 w-full max-w-[640px]">
+              <details ${state.rawDiffOpen ? "open" : ""} id="raw-diff-details" class="app-card overflow-hidden">
+                <summary class="summary-reset flex items-center gap-2 px-5 py-4 text-sm font-medium text-[#6B7280]">
+                  <span>${state.rawDiffOpen ? "∨" : "▸"}</span>
+                  <span>View raw diff</span>
+                </summary>
+                <div class="border-t border-[#E5E7EB] bg-[#FCFCFB] p-5">
+                  <pre class="raw-diff soft-scroll mono">${escapeHtml(rawDiffText)}</pre>
+                </div>
+              </details>
+            </div>
+
+            <div class="mx-auto mt-10 flex w-full max-w-[640px] items-center justify-between gap-4 border-t border-[#E5E7EB] pt-6">
+              <button type="button" data-action="back-home" class="text-button px-4">← Back</button>
+              <button type="button" data-action="to-step-2" class="primary-button px-6">Continue →</button>
+            </div>
+          </div>
+        </main>
+      `;
+    }
+
+    function renderStepTwo() {
+      return `
+        <main class="mx-auto w-full max-w-[1120px] flex-1 px-4 py-10 md:px-6 md:py-14">
+          <div class="mx-auto max-w-[760px]">
+            ${renderStepDots(2)}
+            <div class="mb-10">
+              <h1 class="mb-3 text-[34px] font-semibold leading-tight text-[#1A1A1A]">What were you working on?</h1>
+              <p class="text-[18px] text-[#6B7280]">Add context to help Cartero generate your session brief.</p>
+            </div>
+
+            <div class="mb-8">
+              <label for="context-text" class="mb-3 block text-[12px] font-bold uppercase tracking-[0.16em] text-[#4A6FA5]">Session Notes (Optional)</label>
+              <textarea
+                id="context-text"
+                class="app-card h-[160px] w-full resize-none p-4 text-[15px] leading-7 text-[#1A1A1A] outline-none focus:border-[#4A6FA5]"
+                placeholder="Paste a summary of your AI conversation or jot down what you achieved…"
+              >${escapeHtml(state.contextText)}</textarea>
+            </div>
+
+            <div class="helper-divider mb-8">— Or Use A Helper —</div>
+
+            <div class="dashed-box mb-6">
+              <div class="grid gap-5 md:grid-cols-[1fr_auto] md:items-start">
+                <div>
+                  <h2 class="mb-3 text-[18px] font-semibold text-[#1A1A1A]">Not sure? Copy this prompt and ask your AI assistant first.</h2>
+                  <p class="text-[15px] leading-7 text-[#6B7280]">${escapeHtml(HELPER_PROMPT)}</p>
+                </div>
+                <button type="button" data-action="copy-helper" class="outline-button whitespace-nowrap px-5">
+                  ${state.helperCopied ? "Copied ✓" : "⎘ Copy prompt"}
+                </button>
+              </div>
+            </div>
+
+            <p class="mb-10 text-sm text-[#6B7280]">Your data is processed locally.</p>
+
+            <div class="flex flex-col gap-3 border-t border-[#E5E7EB] pt-6 sm:flex-row sm:items-center sm:justify-between">
+              <button type="button" data-action="back-step-1" class="text-button px-4">← Back</button>
+              <div class="flex flex-col gap-3 sm:flex-row">
+                <button type="button" data-action="skip-context" class="outline-button px-5">Skip →</button>
+                <button type="button" data-action="continue-context" class="primary-button px-5">Continue →</button>
+              </div>
+            </div>
+          </div>
+        </main>
+      `;
+    }
+
+    function renderTaskIcon(status) {
+      if (status === "done") {
+        return `<iconify-icon icon="lucide:check-circle-2" width="22" height="22" style="color: var(--success);"></iconify-icon>`;
+      }
+      if (status === "active") {
+        return `<iconify-icon icon="lucide:loader-circle" width="22" height="22" class="task-spinner" style="color: var(--accent);"></iconify-icon>`;
+      }
+      return `<span class="inline-block h-[18px] w-[18px] rounded-full border-2 border-[#D1D5DB] bg-white"></span>`;
+    }
+
+    function renderStepThree() {
+      const completedCount = state.tasks.filter((task) => task.status === "done").length;
+      const progress = Math.max(8, (completedCount / state.tasks.length) * 100);
+
+      return `
+        <main class="mx-auto flex w-full max-w-[1120px] flex-1 items-center px-4 py-10 md:px-6 md:py-14">
+          <div class="mx-auto w-full max-w-[760px]">
+            ${renderStepDots(3)}
+            <div class="mb-10 text-center">
+              <h1 class="mb-3 text-[34px] font-semibold leading-tight text-[#1A1A1A]">Cartero is working on your update.</h1>
+              <p class="text-[18px] text-[#6B7280]">This usually takes 15–90 seconds.</p>
+            </div>
+
+            <div class="relative mx-auto w-full max-w-[480px] overflow-hidden rounded-[12px] border border-[#E5E7EB] bg-white shadow-sm">
+              <div class="absolute left-0 top-0 h-full w-[6px] bg-[#E5E7EB]">
+                <div class="w-full bg-[#4A6FA5]" style="height: ${progress}%;"></div>
+              </div>
+              <div class="space-y-6 px-8 py-8 pl-10">
+                ${state.tasks.map((task) => `
+                  <div class="flex items-center gap-4 ${task.status === "pending" ? "opacity-60" : ""}">
+                    <div class="flex h-6 w-6 items-center justify-center">
+                      ${renderTaskIcon(task.status)}
+                    </div>
+                    <span class="text-[16px] ${task.status === "pending" ? "text-[#6B7280]" : "text-[#1A1A1A]"}">${escapeHtml(task.label)}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          </div>
+        </main>
+      `;
+    }
+
+    function renderStepFour() {
+      const changelogText = state.changelogText || fallbackChangelog();
+      const promptText = state.sessionBrief || fallbackSessionBrief();
+
+      return `
+        <main class="mx-auto w-full max-w-[1120px] flex-1 px-4 py-10 md:px-6 md:py-14">
+          <div class="mx-auto max-w-[960px]">
+            ${renderStepDots(4)}
+            <div class="mb-12 text-center">
+              <div class="mb-5 flex justify-center">
+                <div class="flex h-16 w-16 items-center justify-center rounded-full bg-[#4A6FA5]/10">
+                  <iconify-icon icon="lucide:sparkles" width="28" height="28" style="color: var(--accent);"></iconify-icon>
+                </div>
+              </div>
+              <h1 class="mb-3 text-[34px] font-semibold leading-tight text-[#1A1A1A]">Your update is ready.</h1>
+              <p class="text-[18px] text-[#6B7280]">Generation is complete. Review the prompt below and apply changes when you're ready.</p>
+            </div>
+
+            <div class="mb-6 rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+              <div class="mb-3 flex items-center justify-between gap-4">
+                <div class="text-[12px] font-bold uppercase tracking-[0.16em] text-[#4A6FA5]">Changelog Preview</div>
+                <button type="button" data-action="copy-changelog" class="outline-button shrink-0 px-4">
+                  ${state.changelogCopied ? "Copied ✓" : "⎘ Copy changelog"}
+                </button>
+              </div>
+              <div class="app-card bg-[#FCFCFB] p-4">
+                <div class="soft-scroll max-h-[260px] whitespace-pre-wrap text-[15px] leading-7 text-[#1A1A1A]">${escapeHtml(changelogText)}</div>
+              </div>
+              <p class="mt-3 text-sm text-[#6B7280]">Review this external-facing summary before applying changes.</p>
+            </div>
+
+            <div class="grid gap-6 lg:grid-cols-[320px_minmax(0,480px)] lg:justify-center">
+              <div class="space-y-5">
+                <div class="app-card p-6 shadow-sm">
+                  <div class="mb-5 text-[12px] font-bold uppercase tracking-[0.16em] text-[#4A6FA5]">Execution</div>
+                  <p class="mb-5 text-[15px] leading-7 text-[#6B7280]">
+                    Your generated outputs are ready. Applying changes will be added in the next phase.
+                  </p>
+                  <button type="button" disabled class="primary-button w-full px-5 opacity-50 cursor-not-allowed" style="min-height: 52px;">
+                    Apply changes
+                  </button>
+                </div>
+
+                <div class="rounded-[12px] border border-[#4A6FA5]/20 bg-[#EFF4FB] p-5">
+                  <div class="mb-2 text-[12px] font-bold uppercase tracking-[0.16em] text-[#4A6FA5]">Pro-Tip</div>
+                  <p class="text-[15px] leading-7 text-[#4A6FA5]">
+                    Pasting this prompt into a fresh Claude or ChatGPT session helps the AI stay aligned with your goals and avoid redundant suggestions.
+                  </p>
+                </div>
+              </div>
+
+              <div class="space-y-5">
+                <div class="rounded-[12px] border border-[#4A6FA5]/30 bg-[#F8FAFF] p-6 shadow-sm">
+                  <div class="mb-3 text-[12px] font-bold uppercase tracking-[0.16em] text-[#4A6FA5]">Your Next Session Prompt</div>
+                  <textarea
+                    readonly
+                    class="copy-textarea soft-scroll app-card mb-4 h-[180px] w-full bg-white p-4 text-[15px] leading-7 text-[#1A1A1A] outline-none"
+                  >${escapeHtml(promptText)}</textarea>
+                  <button type="button" data-action="copy-session" class="primary-button mb-3 w-full px-5" style="min-height: 52px;">
+                    ${state.sessionCopied ? "Copied ✓" : "⎘ Copy prompt"}
+                  </button>
+                  <p class="text-sm text-[#6B7280]">Paste this into Claude, ChatGPT, or Cursor to continue.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-10 text-center">
+              <button type="button" data-action="back-home" class="text-button px-4">← Back to home</button>
+            </div>
+          </div>
+        </main>
+      `;
+    }
+
+    function renderCurrentStep() {
+      if (state.currentStep === 1) {
+        return renderStepOne();
+      }
+      if (state.currentStep === 2) {
+        return renderStepTwo();
+      }
+      if (state.currentStep === 3) {
+        return renderStepThree();
+      }
+      if (state.currentStep === 4) {
+        return renderStepFour();
+      }
+      return renderHome();
+    }
+
+    function render() {
+      const app = document.getElementById("app");
+      app.innerHTML = `
+        <div class="flex min-h-screen flex-col bg-[#F8F7F4] text-[#1A1A1A]">
+          ${renderTopBar()}
+          ${renderCurrentStep()}
+        </div>
+      `;
+
+      const details = document.getElementById("raw-diff-details");
+      if (details) {
+        details.addEventListener("toggle", () => {
+          state.rawDiffOpen = details.open;
+          const summary = details.querySelector("summary span");
+          if (summary) {
+            summary.textContent = details.open ? "∨" : "▸";
+          }
+        });
+      }
+
+      const contextText = document.getElementById("context-text");
+      if (contextText) {
+        contextText.addEventListener("input", (event) => {
+          state.contextText = event.target.value;
+        });
+      }
+    }
+
+    async function copyText(value) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+
+      const fallbackField = document.createElement("textarea");
+      fallbackField.value = value;
+      fallbackField.setAttribute("readonly", "");
+      fallbackField.style.position = "absolute";
+      fallbackField.style.left = "-9999px";
+      document.body.appendChild(fallbackField);
+      fallbackField.select();
+      document.execCommand("copy");
+      document.body.removeChild(fallbackField);
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      let payload = null;
+
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        const message = payload && typeof payload.error === "string"
+          ? payload.error
+          : "Request failed.";
+        throw new Error(message);
+      }
+
+      return payload || {};
+    }
+
+    async function loadDiffIfAvailable() {
+      if (diffRequestPromise) {
+        return diffRequestPromise;
+      }
+
+      state.isLoadingDiff = true;
+      diffRequestPromise = (async () => {
+        try {
+          const response = await fetch(API_BASE + "/api/diff", {
+            headers: { "Accept": "application/json" }
+          });
+
+          if (response.status === 404) {
+            updateDiffState("");
+            return;
+          }
+
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const message = payload && typeof payload.error === "string"
+              ? payload.error
+              : "Unable to check repository changes.";
+            throw new Error(message);
+          }
+
+          if (payload && payload.has_changes === true) {
+            const diffText = typeof payload.diff === "string" ? payload.diff : "";
+            updateDiffState(diffText);
+            return;
+          }
+
+          updateDiffState("");
+        } catch (error) {
+          setError(error.message || "Unable to check repository changes.");
+          updateDiffState("");
+        } finally {
+          state.isLoadingDiff = false;
+          diffRequestPromise = null;
+        }
+      })();
+
+      return diffRequestPromise;
+    }
+
+    async function fetchSessionBrief() {
+      try {
+        const payload = await fetchJson(API_BASE + "/api/session");
+        if (typeof payload.session_brief !== "string" || !payload.session_brief.trim()) {
+          throw new Error("Session brief was empty.");
+        }
+        return payload.session_brief;
+      } catch (error) {
+        setError(error.message || "Unable to prepare the session brief.");
+        return fallbackSessionBrief();
+      }
+    }
+
+    async function generateChangelog(contextText) {
+      const payload = await fetchJson(API_BASE + "/api/changelog", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          diff_text: state.diffText,
+          context_text: contextText
+        })
+      });
+
+      if (typeof payload.changelog !== "string" || !payload.changelog.trim()) {
+        throw new Error("Changelog was empty.");
+      }
+
+      return payload.changelog;
+    }
+
+    function resetTasks() {
+      state.tasks = TASK_LABELS.map((label) => ({ label, status: "pending" }));
+    }
+
+    function setTaskStatus(index, status) {
+      if (!state.tasks[index]) {
+        return;
+      }
+      state.tasks[index].status = status;
+      render();
+    }
+
+    async function startGeneration(useContext) {
+      if (state.isGenerating) {
+        return;
+      }
+
+      clearError();
+      state.changelogText = "";
+      state.changelogCopied = false;
+      state.isGenerating = true;
+      state.currentStep = 3;
+      state.generationToken += 1;
+      const token = state.generationToken;
+      resetTasks();
+      state.tasks[0].status = "done";
+      state.tasks[2].status = "active";
+      render();
+
+      const changelogPromise = generateChangelog(useContext ? state.contextText : "");
+
+      await sleep(1000);
+      if (token !== state.generationToken) {
+        return;
+      }
+      setTaskStatus(1, "done");
+
+      let changelogText = "";
+      try {
+        changelogText = await changelogPromise;
+      } catch (error) {
+        if (token !== state.generationToken) {
+          return;
+        }
+        setError(error.message || "Unable to generate the changelog.");
+        setTaskStatus(2, "pending");
+        state.isGenerating = false;
+        render();
+        return;
+      }
+
+      if (token !== state.generationToken) {
+        return;
+      }
+      state.changelogText = changelogText;
+      setTaskStatus(2, "done");
+
+      setTaskStatus(3, "active");
+      await sleep(1000);
+      if (token !== state.generationToken) {
+        return;
+      }
+      setTaskStatus(3, "done");
+
+      setTaskStatus(4, "active");
+      await sleep(1000);
+      if (token !== state.generationToken) {
+        return;
+      }
+      setTaskStatus(4, "done");
+
+      setTaskStatus(5, "active");
+      if (!state.sessionBrief) {
+        state.sessionBrief = await fetchSessionBrief();
+      }
+      if (token !== state.generationToken) {
+        return;
+      }
+      setTaskStatus(5, "done");
+
+      state.isGenerating = false;
+      state.currentStep = 4;
+      render();
+    }
+
+    function flashCopied(key) {
+      state[key] = true;
+      render();
+      window.setTimeout(() => {
+        state[key] = false;
+        render();
+      }, 2000);
+    }
+
+    document.addEventListener("click", async (event) => {
+      const trigger = event.target.closest("[data-action]");
+      if (!trigger) {
+        return;
+      }
+
+      const action = trigger.getAttribute("data-action");
+
+      if (action === "start") {
+        clearError();
+        state.changelogText = "";
+        state.changelogCopied = false;
+        state.currentStep = 1;
+        render();
+        return;
+      }
+
+      if (action === "back-home") {
+        clearError();
+        state.changelogText = "";
+        state.changelogCopied = false;
+        state.currentStep = 0;
+        state.isGenerating = false;
+        const request = loadDiffIfAvailable();
+        render();
+        await request;
+        render();
+        return;
+      }
+
+      if (action === "refresh-changes") {
+        const request = loadDiffIfAvailable();
+        render();
+        await request;
+        render();
+        return;
+      }
+
+      if (action === "to-step-2") {
+        clearError();
+        state.currentStep = 2;
+        render();
+        return;
+      }
+
+      if (action === "back-step-1") {
+        clearError();
+        state.currentStep = 1;
+        render();
+        return;
+      }
+
+      if (action === "copy-helper") {
+        try {
+          await copyText(HELPER_PROMPT);
+          flashCopied("helperCopied");
+        } catch (error) {
+          setError("Unable to copy the helper prompt.");
+          render();
+        }
+        return;
+      }
+
+      if (action === "copy-changelog") {
+        try {
+          await copyText(state.changelogText || fallbackChangelog());
+          flashCopied("changelogCopied");
+        } catch (error) {
+          setError("Unable to copy the changelog preview.");
+          render();
+        }
+        return;
+      }
+
+      if (action === "copy-session") {
+        try {
+          await copyText(state.sessionBrief || fallbackSessionBrief());
+          flashCopied("sessionCopied");
+        } catch (error) {
+          setError("Unable to copy the session prompt.");
+          render();
+        }
+        return;
+      }
+
+      if (action === "skip-context") {
+        await startGeneration(false);
+        return;
+      }
+
+      if (action === "continue-context") {
+        await startGeneration(true);
+        return;
+      }
+
+      if (action === "get-session-prompt") {
+        if (state.isGenerating) return;
+        state.isGenerating = true;
+        clearError();
+        state.changelogText = "";
+        state.changelogCopied = false;
+        render();
+        if (!state.sessionBrief) {
+          state.sessionBrief = await fetchSessionBrief();
+        }
+        state.isGenerating = false;
+        state.currentStep = 4;
+        render();
+      }
+    });
+
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      const request = loadDiffIfAvailable();
+      render();
+      await request;
+      render();
+    });
+
+    async function init() {
+      render();
+      const request = loadDiffIfAvailable();
+      render();
+      await request;
+      render();
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,4 +1,6 @@
 # Cartero – Master Context
+_Last updated: 2026-04-04 21:32_
+_File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
 
@@ -57,23 +59,60 @@ It is a communication system.
 - Merge chunked outputs
 - Propagate warnings to CLI and web
 - Multi-provider LLM support (Anthropic + Gemini)
+- [Phase 4.5 implemented but not yet validated: optional --context-file for generate and commit, cartero context command, structured recap generation, recap + diff as combined LLM input, auto-detection of git diff]
 - Defined the Phase 5 canonical documentation contract for commit summaries, changelogs, FAQs, and knowledge base entries
 - Defined the canonical record as the shared internal data model for documentation outputs
 - Defined the transformation specification from diff + context into canonical Cartero records
 - Defined the output/render layer for deterministic reuse of canonical records across output surfaces
 - Defined the Codex prompt bridge structure for converting canonical records into agent-ready instructions
 - Established a sequential prompting strategy: contract -> transformation -> output layer
+- Generate product-style changelog entries from git diffs (`cartero changelog`)
+- Real-time streaming output for changelog generation (Anthropic provider)
+- Phase 4.5 validated with real API calls and real diffs
+- Generate a session brief from the master context (`cartero session`) — ready to paste into any LLM to start a working session with full project context
+- Generate changelog entries from diff via web (POST /api/changelog)
+- Retrieve session brief via web (GET /api/session)
+- Guided 4-step wizard interface at /wizard for non-technical users
 
 ---
 
-## 4. Current Priorities (Active Now)
+## State
 
-1. Documentation Package (Phase 5)  
-2. GitHub Integration (Phase 6)  
-3. Guided CLI Flow (Phase 6.5)  
-4. UX / Flow Simplification  
-5. Repository & Presentation Layer  
-6. File Management (Deprioritized)
+Phase 5.1 (Wizard Web Interface) completed and validated.
+Phase 4.8 (Web Interface Parity) complete — /api/changelog and /api/session endpoints live.
+
+Phase 5 (Documentation Package) in progress:
+
+* Canonical contract (CARTERO_RECORD_V1) defined and frozen
+* Parser + validation layer implemented
+* llm.py migrated to canonical output
+* generator.py migrated to use canonical record as primary source
+* YAML now exists only as a temporary bridge
+* Master-context freshness guard implemented
+
+Test suite cleaned:
+
+* Replaced root test_changelog.py with proper mocked tests
+* Full suite passing (except known skip)
+
+## Current Priorities
+
+1. Improve output quality toward product-style communication (Notion / Linear level)
+2. Remove YAML bridge and fully adopt canonical record across all surfaces
+3. Standardize output structure across commit, changelog, FAQ, and knowledge base
+4. Fix known bug: /api/session called 3x on wizard Step 4
+5. Prepare CLI/web to consume canonical record directly
+6. Phase 6 preparation: GitHub integration (error handling, confirmations)
+
+## Next Task
+
+Adapt CLI and web layers to consume the canonical record as the primary source of truth, removing reliance on YAML as an intermediate format.
+
+Focus on:
+
+* Updating CLI outputs to render from canonical record
+* Updating web endpoints to return canonical-based structures
+* Gradually removing the YAML bridge once compatibility is ensured
 
 ---
 
@@ -135,6 +174,8 @@ LLM produces structured plain-text with custom markers, which is parsed into a c
 The canonical record is the single source of truth for all output surfaces.
 The system parses the response in-memory and controls final output formatting.
 
+[Current implementation still uses JSON → YAML via CarteroDumper. Migration to plain-text delimiter format is part of Phase 5. Do not revert CarteroDumper until the canonical contract is fully defined and validated.]
+
 ### Principle
 Every CLI function must have an equivalent web interface.
 
@@ -162,6 +203,12 @@ Every CLI function must have an equivalent web interface.
 - CLI requires multiple commands for full workflow  
   → will be simplified via interactive mode  
 
+- Streaming is handled inside llm.py rather than the CLI layer — architecturally not ideal but preserves the existing test suite without modification
+- test_changelog.py lives in the repo root — should be moved to tests/ or removed before production
+- Step 3 wizard UI labels ("Updating GitHub", "Updating project context") are cosmetic and do not reflect real backend calls. Must be corrected before Phase 6 connects real GitHub operations — labels must only appear when the corresponding action is actually executing
+- Phase 6 must include a success state that confirms changes were applied and that the new logs are visible on GitHub
+- Phase 6 must include an error state that surfaces the actual error message from a failed GitHub upload — silent failure is not acceptable
+
 ---
 
 ## 8. Open Decisions / Pending Validation
@@ -169,6 +216,7 @@ Every CLI function must have an equivalent web interface.
 - Validation layer design:
   - how strictly to enforce canonical record compliance
   - where to stop malformed records in the pipeline
+  - [Sanitization layer design: a sanitization pass must run before regex parsing to detect and handle cases where the LLM hallucinates delimiter closure or embeds delimiter markers inside content (e.g. when discussing code). If the canonical record is malformed at parse time, the entire output chain — GitHub, web, CLI — fails silently. Sanitization must be designed as part of the canonical contract in Phase 5, not as a post-hoc patch. Risk level: high.]
 
 - Stress testing strategy:
   - noise-only diffs
@@ -195,8 +243,27 @@ Every CLI function must have an equivalent web interface.
 
 ## 9. Roadmap (Full)
 
+### Phase 4.8 — Web Interface Parity
+
+- ✅ Phase 4.8 — Web Interface Parity
+- POST /api/changelog endpoint (accepts diff + optional context, returns changelog as JSON)
+- GET /api/session endpoint (returns session brief from master-context.md as JSON)
+- Flask server starts correctly via if __name__ == "__main__"
+- 89 tests passing (baseline was 48)
+
 ### Phase 5 — Documentation Package
 
+- ✅ Phase 5.1 — Wizard Web Interface
+- /wizard route implemented in web.py
+- cartero/templates/wizard.html — self-contained single-page wizard
+- 4-step guided flow: review changes → add context → generate → done
+- Integrates with POST /api/changelog and GET /api/session
+- Detects git diff automatically; shows correct state (changes/no changes)
+- Known bug: /api/session called 3x on Step 4 load — needs fix
+- Pending: full flow test with real diff, copy prompt button test
+- ✅ First output surface implemented: `cartero changelog` generates product-style changelog entries from git diffs with optional context and real-time streaming output
+- ✅ POST /api/changelog web endpoint implemented (accepts diff + optional context, returns changelog)
+- ✅ GET /api/session web endpoint implemented (returns session brief from master-context.md)
 - Improve output quality toward product-style communication (Notion / Linear level)
 - Standardize output structure and formatting
 - Ensure consistency across:
@@ -206,6 +273,7 @@ Every CLI function must have an equivalent web interface.
   - knowledge base entries
 - Introduce reusable templates for different output types
 - Replace JSON output with plain-text delimiter format — use structured plain-text with custom markers instead of JSON. Parse fields with regex in-memory. Eliminates parse failures across all generation flows and unblocks reliable output for GitHub integration, guided CLI, and web UI.
+- [Migration to plain-text delimiter format is a hard prerequisite for the Documentation Package. Do not attempt multi-output generation over the current JSON/YAML pipeline — JSON is too rigid for extended marketing and FAQ text blocks and will cause token overflow and escape errors. The canonical contract must be defined and validated before any output surface is built on top of it.]
 
 ### Phase 6 — GitHub Integration
 
@@ -221,6 +289,7 @@ Every CLI function must have an equivalent web interface.
 - Provide step-by-step guidance
 - Suggest next actions based on context
 - Improve onboarding experience
+- [Detect ambiguous diffs and actively prompt the user for context when the diff alone is insufficient to produce a meaningful summary. Context remains optional by design for adoption reasons, but the system should never silently generate low-quality output when it can detect that context would materially improve it.]
 
 ### Phase 7 — UX / Flow Simplification
 
@@ -239,6 +308,13 @@ Every CLI function must have an equivalent web interface.
   - knowledge bases
 - Create a “presentation-ready” layer
 - Support structured export formats
+
+### Phase 12 — Vibe Coding Course
+
+- Extract the Cartero development methodology into a structured course
+- Content sourced from real documented sessions using Cartero itself
+- Covers: prompt design, LLM-assisted decisions, step-by-step verification, context management, and the full vibe coding loop
+- Cartero documents its own teaching method
 
 ### Phase X — Context Automation & Vibe Loop
 
@@ -329,7 +405,49 @@ into:
 - a system that continuously maintains alignment between code, context, and LLM workflows
 ---
 
-## 10. Detailed Reference
+## 10. Working Methodology
+
+Every working session with Cartero follows this flow:
+
+1. Start session with the current session brief. `cartero session` generates the session brief automatically from context/master-context.md. Run it at the start of each session and paste the output into your LLM conversation.
+2. Implement the agreed feature or fix
+3. Run all tests — no phase is marked complete until tests pass
+4. Run `cartero commit` to generate the commit summary
+5. The generated YAML is saved to `.cartero/yaml/` with a timestamp filename
+6. Summarize what changed in the session
+7. Update this master file before closing
+8. Generate new session brief for next session
+
+Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
+
+This creates an observable history of how Cartero's LLM output quality improves with each phase.
+
+### LLM Interaction Rules
+- LLM outputs are Codex prompts by default. Code is only produced when explicitly requested
+- Before generating any prompt, the LLM must state the plan and the facts it is pulling from context, and wait for confirmation if anything is uncertain
+
+### Session Brief Format
+
+The session brief is a lightweight document derived from this master file. It contains only what a fresh LLM needs to execute the next task without making decisions that contradict the architecture or roadmap.
+
+Structure:
+- **State** — last completed phase, what is pending validation
+- **Strategic Direction** — fixed in every brief, never changes
+- **Task** — next phase with enough detail to execute
+- **Modules involved** — only modules touched by this task
+- **Rules (non-negotiable)** — only rules an LLM would violate by default
+- **End of session** — reminder to summarize, update master, generate new brief
+
+### Timestamp Rule
+The timestamp at the top of this document must be updated on every edit.
+The user provides the timestamp — LLMs must never invent it.
+
+### `cartero session` (future command — Phase X.7)
+`cartero session` generates the session brief automatically from context/master-context.md. Run it at the start of each session and paste the output into your LLM conversation.
+
+---
+
+## 11. Detailed Reference
 
 ### CLI
 
@@ -343,6 +461,7 @@ cartero generate --stdin
 cartero commit  
 cartero commit --context-file <path>  
 cartero context  
+cartero session  
 
 ---
 
@@ -393,7 +512,7 @@ Files are named using date + UUID and never overwrite each other.
 
 ---
 
-## 11. Update Guidelines (for LLMs / Codex)
+## 12. Update Guidelines (for LLMs / Codex)
 
 ### Rules
 - Do not rewrite entire sections unnecessarily
@@ -401,6 +520,14 @@ Files are named using date + UUID and never overwrite each other.
 - Reflect only implemented features (not speculative)
 - Keep roadmap complete (do not remove phases)
 - Clean redundancy but do not remove information
+- Mark changed text with [square brackets] describing what changed
+- Remove square brackets from previously marked changes (they become permanent)
+- Update the timestamp at the top on every edit — always ask the user for the current time, never invent it
+
+### Always follow Working Methodology
+- Every session ends with `cartero commit`
+- The `.cartero/yaml/` timestamp file is committed with the code
+- This document is updated and timestamped before closing the session
 
 ### Update Triggers
 Update this file when:
@@ -412,3 +539,4 @@ Update this file when:
 
 ### Reminder Rule
 If significant work has been completed and this file is not updated, remind the user to update it before continuing.
+<!-- Last updated: 2026-04-04 21:32 — Session: wizard Step 3 real generation connected and validated, Phase 5.1 complete -->

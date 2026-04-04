@@ -7,10 +7,40 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from cartero.canonical import parse_canonical_record
 from cartero.cli import main
+from cartero.context_state import MasterRefreshGuard
 from cartero.generator import SummaryGenerationResult
 from cartero.git import GitError, commit, get_changed_files, get_diff, stage_files
 from cartero.llm import LLMCallError
+
+
+_CANONICAL_TEXT = """<<<CARTERO_RECORD_V1>>>
+<<<SUMMARY>>>
+Cartero now explains generated changes in plain language.
+<<<END_SUMMARY>>>
+<<<CHANGELOG>>>
+Cartero now returns a reusable canonical communication record before rendering legacy YAML.
+<<<END_CHANGELOG>>>
+<<<FAQ>>>
+NONE
+<<<END_FAQ>>>
+<<<KNOWLEDGE_BASE>>>
+NONE
+<<<END_KNOWLEDGE_BASE>>>
+<<<END_CARTERO_RECORD_V1>>>"""
+
+
+def _summary_result(
+    yaml_text: str,
+    warning_message: str | None = None,
+) -> SummaryGenerationResult:
+    return SummaryGenerationResult(
+        record=parse_canonical_record(_CANONICAL_TEXT),
+        canonical_text=_CANONICAL_TEXT,
+        yaml_text=yaml_text,
+        warning_message=warning_message,
+    )
 
 
 class GitModuleTests(unittest.TestCase):
@@ -161,13 +191,10 @@ class CommitCommandTests(unittest.TestCase):
             "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text=(
-                    "summary: add commit command\n"
-                    "reason: needed for git flow\n"
-                    "actions: []\n"
-                ),
-                warning_message=None,
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n"
             ),
         ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
             exit_code, stdout, stderr = self._run_commit(["a", "y"])
@@ -185,13 +212,10 @@ class CommitCommandTests(unittest.TestCase):
             "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text=(
-                    "summary: add commit command\n"
-                    "reason: needed for git flow\n"
-                    "actions: []\n"
-                ),
-                warning_message=None,
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n"
             ),
         ), patch("cartero.cli.git_commit") as mock_git_commit:
             exit_code, stdout, stderr = self._run_commit(["a", "n"])
@@ -226,13 +250,10 @@ class CommitCommandTests(unittest.TestCase):
                 "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
             ), patch(
                 "cartero.cli.generate_summary_result_from_diff",
-                return_value=SummaryGenerationResult(
-                    yaml_text=(
-                        "summary: add commit command\n"
-                        "reason: needed for git flow\n"
-                        "actions: []\n"
-                    ),
-                    warning_message=None,
+                return_value=_summary_result(
+                    "summary: add commit command\n"
+                    "reason: needed for git flow\n"
+                    "actions: []\n"
                 ),
             ) as mock_generate, patch(
                 "cartero.cli.git_commit", return_value="abc1234"
@@ -251,16 +272,88 @@ class CommitCommandTests(unittest.TestCase):
             raw_context="messy notes",
         )
 
+    def test_commit_warns_and_aborts_when_master_context_is_stale(self) -> None:
+        stale_guard = self._make_guard(
+            status="pending",
+            current="2026-04-04T08:00:00+00:00",
+        )
+
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files:
+            exit_code, stdout, stderr = self._run_commit(["n"], guard=stale_guard)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Continue with stale master context?", stdout)
+        self.assertIn("Aborted.", stdout)
+        self.assertIn("warning:", stderr)
+        self.assertIn("summary can be outdated", stderr)
+        mock_stage_files.assert_not_called()
+
+    def test_commit_allows_explicit_continue_when_master_context_is_stale(self) -> None:
+        stale_guard = self._make_guard(
+            status="pending",
+            current="2026-04-04T08:00:00+00:00",
+        )
+
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files, patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n"
+            ),
+        ), patch(
+            "cartero.cli.git_commit", return_value="abc1234"
+        ) as mock_git_commit:
+            exit_code, stdout, stderr = self._run_commit(
+                ["y", "a", "y"],
+                guard=stale_guard,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Continue with stale master context?", stdout)
+        self.assertIn("abc1234", stdout)
+        self.assertIn("warning:", stderr)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_git_commit.assert_called_once_with("add commit command", "needed for git flow")
+
     def _run_commit(
         self,
         input_lines: list[str],
         argv: list[str] | None = None,
+        guard: MasterRefreshGuard | None = None,
     ) -> tuple[int, str, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
         stdin = io.StringIO("\n".join(input_lines) + "\n")
 
-        with patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):
+        active_guard = guard or self._make_guard(status="done")
+
+        with patch("cartero.cli.get_master_refresh_guard", return_value=active_guard), patch(
+            "sys.stdin", stdin
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(["commit", *(argv or [])])
 
         return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def _make_guard(
+        self,
+        *,
+        status: str,
+        at_start: str = "2026-04-04T08:00:00+00:00",
+        current: str = "2026-04-04T09:00:00+00:00",
+        after_refresh: str | None = None,
+    ) -> MasterRefreshGuard:
+        return MasterRefreshGuard(
+            current_master_timestamp=current,
+            master_timestamp_at_start=at_start,
+            master_timestamp_after_refresh=after_refresh,
+            master_refresh_status=status,
+            system_state_exists=True,
+            system_state_initialized=False,
+        )

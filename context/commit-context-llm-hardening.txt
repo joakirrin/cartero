@@ -1,0 +1,24 @@
+Goal: harden provider credential handling and integration test setup for Cartero.
+
+User problem:
+- live generation and integration tests could fail in confusing ways when provider API keys were missing, empty, or invalid
+- the integration pytest marker was not registered, which created unnecessary warnings
+- local setup for running live generation was not documented clearly enough
+
+Key decisions:
+- remove fake API key fallback behavior for Anthropic and Gemini
+- fail early with explicit configuration errors when provider API keys are missing or empty
+- register the pytest integration marker
+- keep integration tests explicit and skippable when ANTHROPIC_API_KEY is not configured
+- add minimal README guidance for local LLM setup and integration test behavior
+
+Tradeoffs:
+- live generation now requires explicit local setup instead of permissive fallback behavior
+- stricter configuration handling improves determinism but makes missing setup fail earlier
+
+Expected user-visible outcome:
+- Cartero now reports missing provider credentials clearly instead of proceeding with ambiguous fallback behavior
+- integration tests are easier to understand and run locally
+
+Explanation for non-technical users:
+- Cartero now handles missing AI provider credentials more clearly and documents how live integration tests should be run.

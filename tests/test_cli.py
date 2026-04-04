@@ -9,9 +9,50 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from cartero.canonical import parse_canonical_record
 from cartero.cli import main
+from cartero.context_state import MasterRefreshGuard
 from cartero.executor import execute_actions as real_execute_actions
 from cartero.generator import SummaryGenerationResult
+
+
+def _fresh_master_guard() -> MasterRefreshGuard:
+    return MasterRefreshGuard(
+        current_master_timestamp="2026-04-04T09:00:00+00:00",
+        master_timestamp_at_start="2026-04-04T08:00:00+00:00",
+        master_timestamp_after_refresh="2026-04-04T09:00:00+00:00",
+        master_refresh_status="done",
+        system_state_exists=True,
+        system_state_initialized=False,
+    )
+
+
+_CANONICAL_TEXT = """<<<CARTERO_RECORD_V1>>>
+<<<SUMMARY>>>
+Cartero now explains generated changes in plain language.
+<<<END_SUMMARY>>>
+<<<CHANGELOG>>>
+Cartero now returns a reusable canonical communication record before rendering legacy YAML.
+<<<END_CHANGELOG>>>
+<<<FAQ>>>
+NONE
+<<<END_FAQ>>>
+<<<KNOWLEDGE_BASE>>>
+NONE
+<<<END_KNOWLEDGE_BASE>>>
+<<<END_CARTERO_RECORD_V1>>>"""
+
+
+def _summary_result(
+    yaml_text: str,
+    warning_message: str | None = None,
+) -> SummaryGenerationResult:
+    return SummaryGenerationResult(
+        record=parse_canonical_record(_CANONICAL_TEXT),
+        canonical_text=_CANONICAL_TEXT,
+        yaml_text=yaml_text,
+        warning_message=warning_message,
+    )
 
 
 class CliTests(unittest.TestCase):
@@ -129,10 +170,7 @@ class CliTests(unittest.TestCase):
             stderr = io.StringIO()
             with patch(
                 "cartero.cli.generate_summary_result_from_diff",
-                return_value=SummaryGenerationResult(
-                    yaml_text="summary: test\n",
-                    warning_message=None,
-                ),
+                return_value=_summary_result("summary: test\n"),
             ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main(
                     [
@@ -160,10 +198,7 @@ class CliTests(unittest.TestCase):
             return_value="diff --git a/x b/x\n",
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: test\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: test\n"),
         ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(["generate"])
 
@@ -181,10 +216,7 @@ class CliTests(unittest.TestCase):
 
         with patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: test\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: test\n"),
         ) as mock_generate, patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(["generate", "--stdin"])
 
@@ -220,10 +252,7 @@ class CliTests(unittest.TestCase):
             return_value="",
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: no-op\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: no-op\n"),
         ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(["generate"])
 
@@ -245,10 +274,7 @@ class CliTests(unittest.TestCase):
 
             with patch(
                 "cartero.cli.generate_summary_result_from_diff",
-                return_value=SummaryGenerationResult(
-                    yaml_text="summary: conservative\n",
-                    warning_message=None,
-                ),
+                return_value=_summary_result("summary: conservative\n"),
             ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main(
                     [
@@ -283,10 +309,7 @@ class CliTests(unittest.TestCase):
 
         with patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: partial rollout\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: partial rollout\n"),
         ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(
                 [
@@ -321,10 +344,7 @@ class CliTests(unittest.TestCase):
 
         with patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: tests only\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: tests only\n"),
         ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(
                 [
@@ -355,10 +375,7 @@ class CliTests(unittest.TestCase):
 
         with patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: grouped changes\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: grouped changes\n"),
         ) as mock_generate, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(
                 [
@@ -403,10 +420,7 @@ class CliTests(unittest.TestCase):
 
             with patch(
                 "cartero.generator.generate_summary_result_from_diff",
-                return_value=SummaryGenerationResult(
-                    yaml_text="summary: module path\n",
-                    warning_message=None,
-                ),
+                return_value=_summary_result("summary: module path\n"),
             ) as mock_generate, patch(
                 "sys.argv",
                 [
@@ -451,10 +465,7 @@ class InteractiveCliTests(unittest.TestCase):
             "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py b/cartero/cli.py\n"
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text="summary: test\n",
-                warning_message=None,
-            ),
+            return_value=_summary_result("summary: test\n"),
         ) as mock_generate, patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(
             stderr
         ):
@@ -479,14 +490,11 @@ class InteractiveCliTests(unittest.TestCase):
             "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py b/cartero/cli.py\n"
         ), patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text=(
-                    "summary: Cartero now explains changes in plain language\n"
-                    "reason: It was hard to understand diffs quickly\n"
-                    "impact: You can review changes faster\n"
-                    "actions: []\n"
-                ),
-                warning_message=None,
+            return_value=_summary_result(
+                "summary: Cartero now explains changes in plain language\n"
+                "reason: It was hard to understand diffs quickly\n"
+                "impact: You can review changes faster\n"
+                "actions: []\n"
             ),
         ) as mock_generate, patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(
             stderr
@@ -519,19 +527,17 @@ class InteractiveCliTests(unittest.TestCase):
             ],
         ), patch("cartero.cli.stage_files") as mock_stage, patch(
             "cartero.cli.generate_summary_result_from_diff",
-            return_value=SummaryGenerationResult(
-                yaml_text=(
-                    "summary: Cartero now commits guided changes\n"
-                    "reason: Manual testing took too many steps\n"
-                    "actions: []\n"
-                ),
-                warning_message=None,
+            return_value=_summary_result(
+                "summary: Cartero now commits guided changes\n"
+                "reason: Manual testing took too many steps\n"
+                "actions: []\n"
             ),
         ) as mock_generate, patch(
             "cartero.cli.git_commit", return_value="abc1234"
-        ) as mock_commit, patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(
-            stderr
-        ):
+        ) as mock_commit, patch(
+            "cartero.cli.get_master_refresh_guard",
+            return_value=_fresh_master_guard(),
+        ), patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)

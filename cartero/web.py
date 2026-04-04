@@ -9,8 +9,14 @@ from flask import Flask, jsonify, render_template, request
 from rich.console import Console
 
 from cartero.cli import render_plan
-from cartero.generator import generate_summary_result_from_diff
-from cartero.llm import LLMCallError, LLMConfigError
+from cartero.generator import generate_context_recap, generate_summary_result_from_diff
+from cartero.git import get_diff
+from cartero.llm import (
+    LLMCallError,
+    LLMConfigError,
+    generate_changelog,
+    generate_session_brief,
+)
 from cartero.parser import ParseError, StrictLoader
 from cartero.validator import ValidationError, validate_summary
 
@@ -36,14 +42,18 @@ SUPPORTED_MODES = {"dry-run", "apply"}
 def create_app() -> Flask:
     app = Flask(__name__)
 
-    @app.get("/")
+    @app.route("/", methods=["GET"])
     def index() -> str:
         return _render_page(
             yaml_text="",
             sample_yaml=SAMPLE_SUMMARY_YAML,
         )
 
-    @app.post("/")
+    @app.route("/wizard", methods=["GET"])
+    def wizard() -> str:
+        return render_template("wizard.html")
+
+    @app.route("/", methods=["POST"])
     def run() -> tuple[str, int] | str:
         yaml_text = request.form.get("yaml_text", "")
         action = request.form.get("action", "dry-run")
@@ -80,7 +90,7 @@ def create_app() -> Flask:
             output_filename=_build_output_filename(action),
         )
 
-    @app.post("/generate")
+    @app.route("/generate", methods=["POST"])
     def generate() -> tuple[Any, int]:
         diff_text = request.form.get("diff_text", "")
         raw_context = request.form.get("context_text") or None
@@ -95,11 +105,55 @@ def create_app() -> Flask:
             payload["warning"] = result.warning_message
         return jsonify(payload), 200
 
+    @app.route("/api/changelog", methods=["POST"])
+    def api_changelog() -> tuple[Any, int]:
+        payload = request.get_json(silent=True) or {}
+        diff_text = payload.get("diff_text", "")
+        if not isinstance(diff_text, str) or not diff_text.strip():
+            return jsonify({"error": "diff_text is required"}), 400
+
+        context_text = payload.get("context_text")
+        try:
+            context_recap = None
+            if isinstance(context_text, str) and context_text.strip():
+                context_recap = generate_context_recap(context_text)
+            changelog = generate_changelog(diff_text, context_recap=context_recap)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (LLMConfigError, LLMCallError) as exc:
+            return jsonify({"error": str(exc)}), 500
+
+        return jsonify({"changelog": changelog}), 200
+
+    @app.route("/api/session", methods=["GET"])
+    def api_session() -> tuple[Any, int]:
+        try:
+            session_brief = generate_session_brief()
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 500
+        except (LLMConfigError, LLMCallError) as exc:
+            return jsonify({"error": str(exc)}), 500
+
+        return jsonify({"session_brief": session_brief}), 200
+
+    @app.route("/api/diff", methods=["GET"])
+    def api_diff() -> tuple[Any, int]:
+        try:
+            diff = get_diff()
+            if not diff or not diff.strip():
+                return jsonify({"diff": "", "has_changes": False}), 200
+            return jsonify({"diff": diff, "has_changes": True}), 200
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
     return app
 
 
 def main() -> None:
     app = create_app()
+    print("=== Flask Routes ===")
+    print(app.url_map)
+    print("====================")
     app.run(host="127.0.0.1", port=8000, debug=False)
 
 
@@ -152,3 +206,7 @@ def _render_page(
         result_text=result_text,
         output_filename=output_filename,
     )
+
+
+if __name__ == "__main__":
+    main()

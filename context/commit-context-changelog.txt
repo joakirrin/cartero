@@ -1,0 +1,22 @@
+Goal: añadir generación de changelog como primer output de Fase 5.
+
+User problem:
+- Cartero solo generaba commit summaries, sin forma de producir changelog entries para usuarios finales
+- El output no tenía streaming, parecía colgado durante la generación
+
+Key decisions:
+- añadir generate_changelog en llm.py con system prompt propio orientado a producto
+- añadir cartero changelog como comando CLI completo con --diff-file, --stdin, --context-file
+- activar streaming solo en generate_changelog, con stream=False por defecto para no afectar tests
+- el streaming imprime directamente desde llm.py, handle_changelog no imprime el resultado
+
+Tradeoffs:
+- streaming como responsabilidad de llm.py es menos limpio arquitectónicamente, pero evita tocar los 82 tests existentes
+- markdown permitido en changelog porque el destino final es GitHub
+
+Expected user-visible outcome:
+- cartero changelog produce un changelog entry en tono producto, en streaming, desde el diff actual
+- compatible con context-file para mejorar calidad del output
+
+Explanation for non-technical users:
+- Cartero ahora tiene un comando dedicado para generar entradas de changelog listas para publicar, con feedback visual en tiempo real mientras se genera.
