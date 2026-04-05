@@ -22,6 +22,7 @@ from cartero.executor import execute_actions
 from cartero.generator import (
     SummaryGenerationResult,
     generate_context_recap,
+    is_diff_ambiguous,
     generate_summary_result_from_diff,
 )
 from cartero.git import (
@@ -65,6 +66,8 @@ INTERACTIVE_NEXT_OPTIONS = (
     ("2", "Regenerate"),
     ("3", "Exit"),
 )
+SESSION_NOTES_PATH = Path(".cartero") / "session-notes.md"
+SESSION_NOTE_SEPARATOR = "\n\n---\n\n"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -171,7 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     commit_parser = subparsers.add_parser(
         "commit",
         prog="cartero commit",
-        help="Stage selected files, generate a summary, and create a git commit.",
+        help=(
+            "Stage selected files, generate a summary, and create a git commit. "
+            "Uses .cartero/session-notes.md when --context-file is omitted."
+        ),
     )
     commit_parser.add_argument(
         "--context-file",
@@ -179,6 +185,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to raw context. Cartero will compress it before generation.",
     )
     commit_parser.set_defaults(handler=handle_commit)
+
+    note_parser = subparsers.add_parser(
+        "note",
+        prog="cartero note",
+        help="Append a quick note to .cartero/session-notes.md for future commit context.",
+    )
+    note_parser.add_argument(
+        "text",
+        nargs="?",
+        help="Inline note text to append.",
+    )
+    note_parser.add_argument(
+        "--file",
+        metavar="PATH",
+        help="Append note content from a file.",
+    )
+    note_parser.set_defaults(handler=handle_note)
 
     session_parser = subparsers.add_parser(
         "session",
@@ -356,6 +379,23 @@ def handle_commit(
     )
 
 
+def handle_note(
+    args: argparse.Namespace, console: Console, error_console: Console
+) -> int:
+    try:
+        note_text = _resolve_note_text(
+            _coerce_optional_str(_get_arg_value(args, "text")),
+            _coerce_optional_str(_get_arg_value(args, "file")),
+        )
+        notes_path = _append_session_note(note_text)
+    except ValueError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        return 2
+
+    console.print(f"Appended note to {notes_path}.")
+    return 0
+
+
 def handle_interactive(console: Console, error_console: Console) -> int:
     try:
         changed_files = get_changed_files()
@@ -485,8 +525,13 @@ def _run_commit_flow(
         return 2
 
     try:
-        if raw_context is None:
-            raw_context = _read_optional_text_input(_coerce_optional_str(context_file))
+        raw_context = _resolve_commit_raw_context(
+            diff_text,
+            raw_context=raw_context,
+            context_file=_coerce_optional_str(context_file),
+            console=console,
+            error_console=error_console,
+        )
         with console.status("Generating commit summary…"):
             exit_code, result = _generate_summary_result(
                 diff_text,
@@ -604,6 +649,7 @@ def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
         "context",
         "context-state",
         "commit",
+        "note",
         "changelog",
         "session",
         "readiness",
@@ -645,8 +691,94 @@ def _read_optional_text_input(path: str | None) -> str | None:
     return _read_text_input(path)
 
 
+def _resolve_note_text(text: str | None, file_path: str | None) -> str:
+    has_text = bool(text and text.strip())
+    has_file = bool(file_path and file_path.strip())
+    if has_text == has_file:
+        raise ValueError('Provide either note text or "--file", but not both.')
+    if has_text:
+        return str(text).strip()
+    note_text = _read_text_input(file_path)
+    if not note_text.strip():
+        raise ValueError("Note content cannot be empty.")
+    return note_text.strip()
+
+
+def _append_session_note(note_text: str) -> Path:
+    content = note_text.strip()
+    if not content:
+        raise ValueError("Note content cannot be empty.")
+
+    notes_path = _get_session_notes_path()
+    try:
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        if notes_path.exists():
+            existing_content = notes_path.read_text(encoding="utf-8").strip()
+            if existing_content:
+                rendered_content = f"{existing_content}{SESSION_NOTE_SEPARATOR}{content}\n"
+            else:
+                rendered_content = f"{content}\n"
+        else:
+            rendered_content = f"{content}\n"
+        notes_path.write_text(rendered_content, encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Unable to write session notes to {notes_path}: {exc}") from exc
+    return notes_path
+
+
+def _get_session_notes_path() -> Path:
+    return SESSION_NOTES_PATH
+
+
+def _read_session_notes() -> str | None:
+    notes_path = _get_session_notes_path()
+    if not notes_path.exists():
+        return None
+    try:
+        note_text = notes_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"Unable to read session notes from {notes_path}: {exc}") from exc
+    return note_text or None
+
+
 def _get_arg_value(args: argparse.Namespace, name: str) -> object | None:
     return vars(args).get(name)
+
+
+def _resolve_commit_raw_context(
+    diff_text: str,
+    *,
+    raw_context: str | None,
+    context_file: str | None,
+    console: Console,
+    error_console: Console,
+) -> str | None:
+    del error_console
+    if raw_context is not None:
+        return raw_context
+    if context_file is not None:
+        return _read_optional_text_input(context_file)
+
+    session_notes = _read_session_notes()
+    if session_notes:
+        console.print(f"Using session notes from {_get_session_notes_path()}.")
+        return session_notes
+
+    if not is_diff_ambiguous(diff_text):
+        return None
+
+    console.print(
+        "This diff looks ambiguous. Add a short note for the commit summary, or press Enter to skip."
+    )
+    console.print("> ", end="")
+    try:
+        note_text = input().strip()
+    except EOFError:
+        return None
+    if note_text:
+        console.print("Using your note as commit context.")
+        return note_text
+    return None
 
 
 def _generate_summary_result(

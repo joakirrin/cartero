@@ -33,10 +33,13 @@ Cartero is evolving from a commit tool into a full system for turning code into 
 * Generate product-style changelog entries with real-time streaming (`cartero changelog`)
 * Generate a session brief from the master context, ready to paste into any LLM (`cartero session`)
 * Stage files and create git commits in plain language (`cartero commit`)
+* Append quick repo-local session notes for commit context (`cartero note`)
 * Compress raw notes or LLM conversations into structured context (`cartero context`)
 * Validate and execute structured change summaries safely (`cartero run`)
 * Optional context support — provide notes or conversations to improve output quality
 * Multi-provider LLM support (Anthropic and Gemini)
+
+When `cartero commit` runs without `--context-file`, it now checks `.cartero/session-notes.md` first and uses those notes as raw commit context when present.
 
 ### What’s coming next
 
@@ -81,3 +84,4 @@ Use `summary.fallback_frequency`, `summary.retry_frequency`, and `summary.normal
 Use `summary.parity` to confirm the structured `commit_fields` still align with YAML-backed behavior and the web/CLI surfaces.
 
 The command exits with code `1` when the report contains fail-level cases or parity mismatches, so it can be used as a lightweight gating check.
+# note flow test

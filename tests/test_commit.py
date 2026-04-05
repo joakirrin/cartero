@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -298,6 +299,9 @@ class CommitCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             context_path = Path(temp_dir) / "context.txt"
             context_path.write_text("messy notes", encoding="utf-8")
+            notes_dir = Path(temp_dir) / ".cartero"
+            notes_dir.mkdir()
+            (notes_dir / "session-notes.md").write_text("session notes", encoding="utf-8")
 
             with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
                 "cartero.cli.stage_files"
@@ -313,10 +317,15 @@ class CommitCommandTests(unittest.TestCase):
             ) as mock_generate, patch(
                 "cartero.cli.git_commit", return_value="abc1234"
             ):
-                exit_code, stdout, stderr = self._run_commit(
-                    ["a", "y"],
-                    argv=["--context-file", str(context_path)],
-                )
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(
+                        ["a", "y"],
+                        argv=["--context-file", str(context_path)],
+                    )
+                finally:
+                    os.chdir(original_cwd)
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr, "")
@@ -325,6 +334,112 @@ class CommitCommandTests(unittest.TestCase):
         mock_generate.assert_called_once_with(
             "diff --git a/cartero/cli.py ...",
             raw_context="messy notes",
+        )
+
+    def test_commit_uses_session_notes_when_context_file_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text("quick repo note", encoding="utf-8")
+
+            with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+                "cartero.cli.stage_files"
+            ) as mock_stage_files, patch(
+                "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+            ), patch(
+                "cartero.cli.generate_summary_result_from_diff",
+                return_value=_summary_result(
+                    "summary: add commit command\n"
+                    "reason: needed for git flow\n"
+                    "actions: []\n"
+                ),
+            ) as mock_generate, patch(
+                "cartero.cli.git_commit", return_value="abc1234"
+            ):
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a", "y"])
+                finally:
+                    os.chdir(original_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("Using session notes from .cartero/session-notes.md.", stdout)
+        self.assertIn("abc1234", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_generate.assert_called_once_with(
+            "diff --git a/cartero/cli.py ...",
+            raw_context="quick repo note",
+        )
+
+    def test_commit_prompts_for_note_when_diff_is_ambiguous_and_no_context_exists(self) -> None:
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files, patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+        ), patch(
+            "cartero.cli.is_diff_ambiguous", return_value=True
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n"
+            ),
+        ) as mock_generate, patch(
+            "cartero.cli.git_commit", return_value="abc1234"
+        ):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a", "quick note", "y"])
+                finally:
+                    os.chdir(original_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("This diff looks ambiguous.", stdout)
+        self.assertIn("Using your note as commit context.", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_generate.assert_called_once_with(
+            "diff --git a/cartero/cli.py ...",
+            raw_context="quick note",
+        )
+
+    def test_commit_empty_ambiguity_prompt_response_falls_back_to_no_context(self) -> None:
+        with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+            "cartero.cli.stage_files"
+        ) as mock_stage_files, patch(
+            "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+        ), patch(
+            "cartero.cli.is_diff_ambiguous", return_value=True
+        ), patch(
+            "cartero.cli.generate_summary_result_from_diff",
+            return_value=_summary_result(
+                "summary: add commit command\n"
+                "reason: needed for git flow\n"
+                "actions: []\n"
+            ),
+        ) as mock_generate, patch(
+            "cartero.cli.git_commit", return_value="abc1234"
+        ):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a", "", "y"])
+                finally:
+                    os.chdir(original_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("This diff looks ambiguous.", stdout)
+        mock_stage_files.assert_called_once_with(["cartero/cli.py"])
+        mock_generate.assert_called_once_with(
+            "diff --git a/cartero/cli.py ...",
+            raw_context=None,
         )
 
     def test_commit_warns_and_aborts_when_master_context_is_stale(self) -> None:
@@ -412,3 +527,78 @@ class CommitCommandTests(unittest.TestCase):
             system_state_exists=True,
             system_state_initialized=False,
         )
+
+
+class NoteCommandTests(unittest.TestCase):
+    def test_note_command_creates_notes_file_automatically(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exit_code, stdout, stderr, notes_path = self._run_note(
+                temp_dir,
+                ["note", "quick context"],
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertTrue(notes_path.exists())
+            self.assertEqual(notes_path.read_text(encoding="utf-8"), "quick context\n")
+            self.assertIn("Appended note to .cartero/session-notes.md.", stdout)
+
+    def test_note_command_appends_inline_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_exit_code, _, first_stderr, notes_path = self._run_note(
+                temp_dir,
+                ["note", "first note"],
+            )
+            second_exit_code, _, second_stderr, _ = self._run_note(
+                temp_dir,
+                ["note", "second note"],
+            )
+            self.assertEqual(first_exit_code, 0)
+            self.assertEqual(second_exit_code, 0)
+            self.assertEqual(first_stderr, "")
+            self.assertEqual(second_stderr, "")
+            self.assertEqual(
+                notes_path.read_text(encoding="utf-8"),
+                "first note\n\n---\n\nsecond note\n",
+            )
+
+    def test_note_command_appends_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "note.txt"
+            source_path.write_text("line one\nline two\n", encoding="utf-8")
+
+            exit_code, stdout, stderr, notes_path = self._run_note(
+                temp_dir,
+                ["note", "--file", str(source_path)],
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("Appended note to .cartero/session-notes.md.", stdout)
+            self.assertEqual(notes_path.read_text(encoding="utf-8"), "line one\nline two\n")
+
+    def test_note_file_format_remains_stable_and_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self._run_note(temp_dir, ["note", "first note"])
+            self._run_note(temp_dir, ["note", "second note\nwith detail"])
+            _, _, _, notes_path = self._run_note(temp_dir, ["note", "third note"])
+            self.assertEqual(
+                notes_path.read_text(encoding="utf-8"),
+                "first note\n\n---\n\nsecond note\nwith detail\n\n---\n\nthird note\n",
+            )
+
+    def _run_note(
+        self,
+        temp_dir: str,
+        argv: list[str],
+    ) -> tuple[int, str, str, Path]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+        original_cwd = os.getcwd()
+        os.chdir(temp_dir)
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(argv)
+        finally:
+            os.chdir(original_cwd)
+
+        return exit_code, stdout.getvalue(), stderr.getvalue(), notes_path

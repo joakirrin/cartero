@@ -1,0 +1,5 @@
+Goal:
+Improve commit-summary output quality and readiness visibility.
+
+User problem:
+Without context, ambiguous diffs still produced weak summaries.

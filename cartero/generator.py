@@ -95,6 +95,10 @@ def generate_context_recap(
     return llm.generate_context_recap(raw_context, config)
 
 
+def is_diff_ambiguous(diff_text: str | None) -> bool:
+    return llm.assess_commit_bridge_diff(diff_text).ambiguous
+
+
 def _validate_diff_text(diff_text: str) -> None:
     if not isinstance(diff_text, str) or not diff_text.strip():
         raise ValueError("diff_text must be a non-empty string")

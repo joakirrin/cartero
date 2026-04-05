@@ -787,6 +787,10 @@ def _assess_commit_bridge_diff(diff_text: str | None) -> CommitBridgeDiffAssessm
     )
 
 
+def assess_commit_bridge_diff(diff_text: str | None) -> CommitBridgeDiffAssessment:
+    return _assess_commit_bridge_diff(diff_text)
+
+
 def _extract_diff_paths(diff_text: str) -> list[str]:
     paths: list[str] = []
     for line in diff_text.splitlines():
