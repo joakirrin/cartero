@@ -7,3 +7,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 commit-summary.yaml
+# Cartero local session artifacts
+.cartero/session-notes.md
+.cartero/session-summary/
+.cartero/archive/
+valid-session-block.txt
+override-context.txt
