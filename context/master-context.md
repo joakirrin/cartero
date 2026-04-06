@@ -68,7 +68,15 @@ It is a communication system.
 - Established a sequential prompting strategy: contract -> transformation -> output layer
 - Generate product-style changelog entries from git diffs (`cartero changelog`)
 - Real-time streaming output for changelog generation (Anthropic provider)
-- Inspect `.cartero/session-notes.md`, show required-field status, and import strict v1 session summaries via `cartero session`
+- [Automatic Codex operational session capture path defined via `AGENTS.md`]
+- [External LLM session-contract artifact added at `context/llm-system-prompt.md`]
+- [Local session-context status/import command implemented via `cartero session`]
+- [Strict v1 session-block import implemented via `cartero session --import`]
+- [Imported session summaries now persist as `raw-latest`, `normalized-latest`, and timestamped raw/normalized archives]
+- [Malformed session imports preserve raw backups and fail safely]
+- [`.cartero/session-notes.md` is now the active operational session-context file]
+- [When `--context-file` is omitted, `cartero commit` automatically uses `.cartero/session-notes.md` as commit context]
+- [After a successful local commit, session notes are archived to timestamped files under `.cartero/archive/`]
 - Generate changelog entries from diff via web (POST /api/changelog)
 - Retrieve session brief via web (GET /api/session)
 - Guided 4-step wizard interface at /wizard for non-technical users
@@ -103,6 +111,12 @@ Phase 5 (Documentation Package) in progress:
 * [Current strengths: clear-intent commit quality is strong, parity checks are passing, and ambiguous no-context cases are handled more truthfully]
 * [Current limitation: the readiness corpus is still small, so more evidence is needed before changing defaults or removing YAML]
 * [Current readiness conclusion: the system is close, but the canonical-first default switch is not yet approved]
+* [Session-context flow Phase 1, Phase 1.1, and Phase 2 are implemented and manually validated]
+* [The current `cartero session --import` contract is intentionally strict and narrow: only `decisions`, `tradeoffs`, and `risks_open_issues` inside the exact `<<<CARTERO_SESSION_V1>>>` and `<<<END_CARTERO_SESSION_V1>>>` delimiters]
+* [Docs, help text, prompts, and this master-context contract are now aligned to that narrower v1 import flow]
+* [`.cartero/session-notes.md` is now the active operational context source for `cartero commit`]
+* [`cartero note` remains available as fallback/manual capture, but it is no longer the primary session-context path]
+* [Broader session-summary fields and richer import/bootstrap schema remain deferred to a later phase]
 
 Test suite cleaned:
 
@@ -112,30 +126,29 @@ Test suite cleaned:
 
 ## Current Priorities
 
-1. Improve output quality toward product-style communication (focus on commit summary `reason` and `impact`)
-2. Remove YAML bridge and fully adopt canonical record across all surfaces
-3. Standardize output structure across commit, changelog, FAQ, and knowledge base
-4. Fix known bug: /api/session called 3x on wizard Step 4
-5. [Expand readiness evidence before switching defaults: grow the corpus, repeat measurement on more real diffs, and keep parity visible]
-6. [Reduce context friction via lightweight session notes and automatic context injection into commit generation]
-7. [Prepare CLI/web for canonical-first consumption only when readiness gates are strong enough to justify removing the YAML bridge]
-8. Phase 6 preparation: GitHub integration (error handling, confirmations)
+1. [Implement deterministic freshness warnings for the session-context flow and `context/master-context.md` usage]
+2. [Add architecture/priority impact classification for session changes]
+3. [Design a reviewable Sonnet patch-proposal flow for `context/master-context.md`]
+4. [Continue output-quality validation on top of the new session-context flow, especially commit summary `reason` and `impact`]
+5. [Remove YAML bridge and fully adopt canonical record across all surfaces]
+6. [Prepare CLI/web for canonical-first consumption only when readiness gates are strong enough to justify removing the YAML bridge]
+7. [Fix known bug: /api/session called 3x on wizard Step 4]
+8. [Phase 6 preparation: GitHub integration (error handling, confirmations)]
 
 ## Next Task
 
-[Continue readiness validation before fully migrating CLI and web to canonical-first consumption.]
+[Implement deterministic freshness warnings and the next reviewable context-automation step on top of the current session-context flow.]
 
 Focus on:
 
-* [Expanding the readiness corpus with more representative real diffs]
-* [Validating migration gates with repeated readiness runs and more real-world cases]
-* [Confirming that clear-intent quality remains strong and that ambiguous no-context cases stay restrained and truthful]
+* [Implementing deterministic freshness warnings for `.cartero/session-notes.md` and `context/master-context.md` usage]
+* [Adding Haiku classification for architecture impact and priority impact]
+* [Adding a Sonnet patch-proposal flow for `context/master-context.md` with user review before apply]
 
 Parallel track:
 
-* [Design lightweight session-note capture (`cartero note "<text>"`, `cartero note --file <path>`) stored in `.cartero/session-notes.md`]
-* [Allow `cartero commit` to aggregate session notes automatically as commit context]
-* [If no notes exist and the diff is ambiguous, prompt for a minimal note instead of silently proceeding without useful context]
+* [Continue output-quality validation with session-notes-backed commit generation]
+* [Keep the current v1 import contract narrow until the later schema-broadening phase]
 * [Keep YAML as the compatibility artifact until readiness evidence is broader]
 
 ---
@@ -253,6 +266,14 @@ Every CLI function must have an equivalent web interface.
 
 - [Ambiguity-safe no-context behavior now exists for docs-only, tests-only, formatting-only, and other low-signal diffs, but best output quality still depends on having useful context]
 
+- [Current `CARTERO_SESSION_V1` import contract is intentionally limited to `decisions`, `tradeoffs`, and `risks_open_issues`]
+
+- [Broader session-summary fields such as `goal`, `user problem`, and `user impact` remain deferred]
+
+- [Session-context capture is improved, but richer reasoning capture still depends on manual paste from an external LLM via `cartero session --import`]
+
+- [Updating `context/master-context.md` from session notes is not yet automated]
+
 - Automatic validation of canonical records is not yet fully enforced
   → malformed records may still pass too far through the pipeline
 
@@ -310,6 +331,15 @@ Every CLI function must have an equivalent web interface.
   - [when notes are auto-included in commit generation]
   - [how users review or edit the generated recap before commit]
   - [whether ambiguous diffs should require a minimal note when no useful context exists]
+
+- [Session-context expansion:]
+  - [when and how to broaden the import contract beyond the current 3-field v1 block]
+  - [how much richer reasoning should be captured directly vs pasted from an external LLM]
+
+- [Freshness / classification / patching:]
+  - [exact deterministic freshness heuristics for warnings and blocking behavior]
+  - [confidence threshold and fallback behavior for Haiku architecture/priority classification]
+  - [patch UX for accept/edit/reject review of `master-context.md` proposals]
 
 - Guided CLI flow design:
   - how much structure vs flexibility
@@ -448,6 +478,7 @@ Strategic relevance:
 - Automatically detect code changes (diff)
 - Accept optional developer notes
 - Generate structured work-session summaries
+- [Current implemented operational path: Codex appends `[CODEX]` session entries via `AGENTS.md`, external LLM reasoning enters through `cartero session --import`, and `.cartero/session-notes.md` stores the active session context]
 
 #### X.2 — Master Context Update Engine
 
@@ -457,6 +488,7 @@ Strategic relevance:
   - capability changes
   - priority shifts
   - resolved or new issues
+- [Automated patch proposals for `context/master-context.md` remain a later phase; no Sonnet patch proposal flow is implemented yet]
 
 #### X.3 — Derived Files Regeneration
 
@@ -510,13 +542,13 @@ Strategic relevance:
 
 #### X.9 — Session Notes Capture & Context Injection
 
-- [Enable lightweight note capture during a session]
-- [Support `cartero note "<text>"` and `cartero note --file <path>` as the likely first step]
-- [Store notes in `.cartero/session-notes.md`]
-- [Automatically reuse session notes as commit context during `cartero commit`]
-- [If a diff is ambiguous and no useful notes exist, prompt for a minimal note instead of silently proceeding]
-- [Future API / MCP integrations can push notes into Cartero automatically]
-- [This supports vibe coding workflows by reducing manual context-file creation and making context collection near-frictionless]
+- [Current primary v1 flow is: Codex writes `[CODEX]` notes, the user pastes external LLM session blocks via `cartero session --import`, and `cartero commit` reuses `.cartero/session-notes.md` when `--context-file` is omitted]
+- [`cartero note` remains available as fallback/manual capture, but it is no longer the primary path]
+- [Successful local commits now archive session notes to timestamped files under `.cartero/archive/`]
+- [If a diff is ambiguous and no useful notes exist, `cartero commit` can still prompt for a minimal note instead of silently proceeding]
+- [Future API / MCP integrations can push richer notes into Cartero automatically]
+- [Future master-context proposal generation from session notes remains deferred]
+- [This supports vibe coding workflows by reducing manual context-file creation while keeping richer automatic import / MCP-based context capture as future work]
 
 ### Additional System Rule
 
@@ -552,7 +584,9 @@ Every working session with Cartero follows this flow:
 7. Update this master file before closing
 8. Capture a final strict v1 session-summary block and import it with `cartero session --import`
 
-Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
+[Current end-of-session flow now includes validating `.cartero/session-notes.md`, importing the strict v1 LLM session block with `cartero session --import` when useful, committing with session-notes-backed context unless `--context-file` is explicitly supplied, and updating this master file before closing the session.]
+
+[Richer freshness checks, classification, and automated `master-context.md` patching remain later-phase work.]
 
 This creates an observable history of how Cartero's LLM output quality improves with each phase.
 
