@@ -616,6 +616,12 @@ class InteractiveCliTests(unittest.TestCase):
         ) as mock_generate, patch(
             "cartero.cli.git_commit", return_value="abc1234"
         ) as mock_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch(
+            "cartero.cli.archive_session_notes",
+            return_value=None,
+        ), patch(
             "cartero.cli.get_master_refresh_guard",
             return_value=_fresh_master_guard(),
         ), patch("sys.stdin", stdin), redirect_stdout(stdout), redirect_stderr(stderr):

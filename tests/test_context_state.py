@@ -92,46 +92,7 @@ class ContextStateTests(unittest.TestCase):
         os.utime(self.master_path, ns=(current_stat.st_atime_ns, next_timestamp))
 
 
-class SessionGuardCliTests(unittest.TestCase):
-    def test_session_blocks_when_master_context_is_stale(self) -> None:
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-
-        with patch(
-            "cartero.cli.get_master_refresh_guard",
-            return_value=_make_guard(status=PENDING_STATUS, current="2026-04-04T08:00:00+00:00"),
-        ), patch("cartero.cli.generate_session_brief") as mock_generate, redirect_stdout(
-            stdout
-        ), redirect_stderr(stderr):
-            exit_code = main(["session"])
-
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertIn("warning:", stderr.getvalue())
-        self.assertIn("cartero session was blocked", stderr.getvalue())
-        mock_generate.assert_not_called()
-
-    def test_session_success_resets_tracking_for_next_session(self) -> None:
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-
-        with patch(
-            "cartero.cli.get_master_refresh_guard",
-            return_value=_make_guard(status=DONE_STATUS),
-        ), patch(
-            "cartero.cli.generate_session_brief",
-            return_value="session brief",
-        ) as mock_generate, patch(
-            "cartero.cli.start_session_tracking"
-        ) as mock_start_tracking, redirect_stdout(stdout), redirect_stderr(stderr):
-            exit_code = main(["session"])
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertEqual(stderr.getvalue(), "")
-        mock_generate.assert_called_once_with()
-        mock_start_tracking.assert_called_once_with()
-
+class ContextStateCliTests(unittest.TestCase):
     def test_context_state_refresh_done_command_prints_persisted_status(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

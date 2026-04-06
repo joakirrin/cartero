@@ -16,7 +16,6 @@ from cartero.context_state import (
     MasterRefreshGuard,
     get_master_refresh_guard,
     mark_master_refresh_done,
-    start_session_tracking,
 )
 from cartero.executor import execute_actions
 from cartero.generator import (
@@ -36,10 +35,18 @@ from cartero.llm import (
     LLMCallError,
     LLMConfigError,
     generate_changelog,
-    generate_session_brief,
 )
 from cartero.readiness import run_readiness_harness
 from cartero.parser import ParseError, load_summary
+from cartero.session_summary import (
+    SESSION_NOTES_PATH,
+    SessionSummaryImportError,
+    SessionSummaryParseError,
+    archive_session_notes,
+    get_session_field_status,
+    import_session_summary,
+    read_session_notes,
+)
 from cartero.simulator import SimulatedAction, simulate_actions
 from cartero.validator import ALLOWED_REPOS, Change, ValidationError, validate_summary
 
@@ -66,7 +73,6 @@ INTERACTIVE_NEXT_OPTIONS = (
     ("2", "Regenerate"),
     ("3", "Exit"),
 )
-SESSION_NOTES_PATH = Path(".cartero") / "session-notes.md"
 SESSION_NOTE_SEPARATOR = "\n\n---\n\n"
 
 
@@ -182,14 +188,20 @@ def build_parser() -> argparse.ArgumentParser:
     commit_parser.add_argument(
         "--context-file",
         metavar="PATH",
-        help="Optional path to raw context. Cartero will compress it before generation.",
+        help=(
+            "Optional path to raw context. Overrides .cartero/session-notes.md "
+            "for this commit."
+        ),
     )
     commit_parser.set_defaults(handler=handle_commit)
 
     note_parser = subparsers.add_parser(
         "note",
         prog="cartero note",
-        help="Append a quick note to .cartero/session-notes.md for future commit context.",
+        help=(
+            "Append a manual fallback note to .cartero/session-notes.md. "
+            "Prefer `cartero session --import` for structured session summaries."
+        ),
     )
     note_parser.add_argument(
         "text",
@@ -206,7 +218,20 @@ def build_parser() -> argparse.ArgumentParser:
     session_parser = subparsers.add_parser(
         "session",
         prog="cartero session",
-        help="Generate a session brief from the master context.",
+        help=(
+            "Show .cartero/session-notes.md with required-field status, "
+            "or import a strict 3-field LLM session block."
+        ),
+    )
+    session_parser.add_argument(
+        "--import",
+        dest="import_session",
+        action="store_true",
+        help=(
+            "Paste a strict CARTERO_SESSION_V1 block "
+            "(decisions, tradeoffs, risks_open_issues) "
+            "and persist raw plus normalized artifacts."
+        ),
     )
     session_parser.set_defaults(handler=handle_session)
 
@@ -314,26 +339,37 @@ def handle_session(
     args: argparse.Namespace, console: Console, error_console: Console
 ) -> int:
     try:
-        guard = get_master_refresh_guard()
-    except ValueError as exc:
+        if bool(_get_arg_value(args, "import_session")):
+            raw_block = _read_pasted_session_block(console)
+            artifacts = import_session_summary(raw_block)
+            console.print(f"Imported session summary into {artifacts.session_notes_path}.")
+            console.print(f"Raw latest: {artifacts.raw_latest_path}")
+            console.print(f"Raw archive: {artifacts.raw_archive_path}")
+            console.print(f"Normalized latest: {artifacts.normalized_latest_path}")
+            console.print(f"Normalized archive: {artifacts.normalized_archive_path}")
+            return 0
+
+        note_text = read_session_notes()
+    except SessionSummaryImportError as exc:
+        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+        error_console.print(f"Raw latest preserved at {exc.raw_latest_path}.")
+        error_console.print(f"Raw archive preserved at {exc.raw_archive_path}.")
+        return 2
+    except (SessionSummaryParseError, ValueError) as exc:
         error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
         return 2
 
-    if guard.needs_refresh:
-        _print_master_context_warning(
-            error_console,
-            guard,
-            command_name="cartero session",
-            blocking=True,
-        )
-        return 2
+    if note_text:
+        console.print(f"Session notes: {SESSION_NOTES_PATH}")
+        console.print(note_text, markup=False)
+    else:
+        console.print(f"No session notes found at {SESSION_NOTES_PATH}.")
 
-    try:
-        generate_session_brief()
-        start_session_tracking()
-    except (LLMConfigError, LLMCallError, ValueError) as exc:
-        error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
-        return 2
+    console.print()
+    console.print("Required field status:")
+    for field_name, is_present in get_session_field_status(note_text).items():
+        status = "present" if is_present else "missing"
+        console.print(f"- {field_name}: {status}")
     return 0
 
 
@@ -577,6 +613,13 @@ def _run_commit_flow(
         return 2
 
     console.print(f"✓ Committed: {commit_hash}")
+    try:
+        archived_path = archive_session_notes()
+    except ValueError as exc:
+        error_console.print(Text.assemble(("warning: ", "yellow"), (str(exc),)))
+    else:
+        if archived_path is not None:
+            console.print(f"Archived session notes to {archived_path}.")
     return 0
 
 
@@ -731,14 +774,7 @@ def _get_session_notes_path() -> Path:
 
 
 def _read_session_notes() -> str | None:
-    notes_path = _get_session_notes_path()
-    if not notes_path.exists():
-        return None
-    try:
-        note_text = notes_path.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise ValueError(f"Unable to read session notes from {notes_path}: {exc}") from exc
-    return note_text or None
+    return read_session_notes()
 
 
 def _get_arg_value(args: argparse.Namespace, name: str) -> object | None:
@@ -969,6 +1005,23 @@ def _capture_interactive_context(console: Console, error_console: Console) -> st
             return _read_text_input(path)
         except ValueError as exc:
             error_console.print(Text.assemble(("error: ", "red"), (str(exc),)))
+
+
+def _read_pasted_session_block(console: Console) -> str:
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+
+    console.print("Paste the Cartero session block. Finish with a line that only says END.")
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "END":
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _read_pasted_context(console: Console) -> str | None:

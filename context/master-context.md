@@ -1,5 +1,5 @@
 # Cartero – Master Context
-_Last updated: 2026-04-05 00:10_
+_Last updated: 2026-04-06 23:26_
 _File path: `context/master-context.md`_
 
 ## 1. Product Identity & Core Insight
@@ -68,7 +68,7 @@ It is a communication system.
 - Established a sequential prompting strategy: contract -> transformation -> output layer
 - Generate product-style changelog entries from git diffs (`cartero changelog`)
 - Real-time streaming output for changelog generation (Anthropic provider)
-- Generate a session brief from the master context (`cartero session`) — ready to paste into any LLM to start a working session with full project context
+- Inspect `.cartero/session-notes.md`, show required-field status, and import strict v1 session summaries via `cartero session`
 - Generate changelog entries from diff via web (POST /api/changelog)
 - Retrieve session brief via web (GET /api/session)
 - Guided 4-step wizard interface at /wizard for non-technical users
@@ -154,6 +154,32 @@ Raw context is compressed into a structured recap:
 - decisions  
 - tradeoffs  
 - user impact  
+
+This broader recap is the `cartero context` and generation contract.
+It is not the Phase 1 `cartero session --import` contract.
+
+### Session Summary Import Contract (v1)
+
+Imported LLM session blocks currently contain only:
+
+- decisions
+- tradeoffs
+- risks_open_issues
+
+Rules:
+
+- use the exact `<<<CARTERO_SESSION_V1>>>` and `<<<END_CARTERO_SESSION_V1>>>` delimiters
+- include all three fields
+- keep values concise and single-line
+- use `none identified this session` instead of blanks
+- never invent or generalize beyond the conversation
+
+Deferred to a later phase:
+
+- goal
+- user problem
+- user impact
+- broader session bootstrap / planning fields
 
 ### Generation Flow
 
@@ -517,14 +543,14 @@ into:
 
 Every working session with Cartero follows this flow:
 
-1. Start session with the current session brief. `cartero session` generates the session brief automatically from context/master-context.md. Run it at the start of each session and paste the output into your LLM conversation.
+1. Start session with the current session brief or bootstrap context when needed. In Phase 1, `cartero session` is the session-summary status/import command, not the session-brief generator.
 2. Implement the agreed feature or fix
 3. Run all tests — no phase is marked complete until tests pass
 4. Run `cartero commit` to generate the commit summary
 5. The generated YAML is saved to `.cartero/yaml/` with a timestamp filename
 6. Summarize what changed in the session
 7. Update this master file before closing
-8. Generate new session brief for next session
+8. Capture a final strict v1 session-summary block and import it with `cartero session --import`
 
 Before running `cartero commit`, create a context file summarizing the session decisions and tradeoffs. This step is currently manual — future improvement: make it explicit and guided in the commit flow so every commit includes full session context automatically.
 
@@ -542,6 +568,9 @@ This creates an observable history of how Cartero's LLM output quality improves 
 
 ### Session Brief Format
 
+This broader session-brief/bootstrap format remains a later-phase evolution for the CLI flow.
+It is separate from the Phase 1 imported session-summary contract.
+
 The session brief is a lightweight document derived from this master file. It contains only what a fresh LLM needs to execute the next task without making decisions that contradict the architecture or roadmap.
 
 Structure:
@@ -556,8 +585,9 @@ Structure:
 The timestamp at the top of this document must be updated on every edit.
 The user provides the timestamp — LLMs must never invent it.
 
-### `cartero session` (future command — Phase X.7)
-`cartero session` generates the session brief automatically from context/master-context.md. Run it at the start of each session and paste the output into your LLM conversation.
+### Session Brief CLI Evolution (later phase)
+Automatic CLI generation of the broader session brief remains a later-phase evolution.
+Phase 1 `cartero session` is intentionally narrower: it inspects `.cartero/session-notes.md` and imports strict 3-field session-summary blocks.
 
 ---
 

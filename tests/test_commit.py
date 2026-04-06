@@ -5,15 +5,19 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from rich.console import Console
+
 from cartero.canonical import parse_canonical_record
-from cartero.cli import main
+from cartero.cli import _resolve_commit_raw_context, main
 from cartero.context_state import MasterRefreshGuard
 from cartero.generator import SummaryGenerationResult
 from cartero.git import GitError, commit, get_changed_files, get_diff, stage_files
 from cartero.llm import LLMCallError
+from cartero.session_summary import archive_session_notes
 
 
 _CANONICAL_TEXT = """<<<CARTERO_RECORD_V1>>>
@@ -30,6 +34,15 @@ NONE
 NONE
 <<<END_KNOWLEDGE_BASE>>>
 <<<END_CARTERO_RECORD_V1>>>"""
+FIXED_ARCHIVE_TIME = datetime(
+    2026,
+    4,
+    6,
+    14,
+    15,
+    16,
+    tzinfo=timezone(timedelta(hours=2)),
+)
 
 
 def _summary_result(
@@ -170,6 +183,70 @@ class GitModuleTests(unittest.TestCase):
         return result
 
 
+class CommitContextResolutionTests(unittest.TestCase):
+    def test_resolve_commit_context_uses_session_notes_when_context_file_is_absent(self) -> None:
+        with patch("cartero.cli._read_session_notes", return_value="quick repo note"), patch(
+            "cartero.cli.is_diff_ambiguous", return_value=False
+        ):
+            resolved, stdout, stderr = self._resolve_context(
+                diff_text="diff --git a/cartero/cli.py ...",
+                raw_context=None,
+                context_file=None,
+            )
+
+        self.assertEqual(resolved, "quick repo note")
+        self.assertIn("Using session notes from .cartero/session-notes.md.", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_resolve_commit_context_keeps_explicit_context_file_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context_path = Path(temp_dir) / "context.txt"
+            context_path.write_text("messy notes", encoding="utf-8")
+
+            with patch("cartero.cli._read_session_notes", return_value="quick repo note"):
+                resolved, stdout, stderr = self._resolve_context(
+                    diff_text="diff --git a/cartero/cli.py ...",
+                    raw_context=None,
+                    context_file=str(context_path),
+                )
+
+        self.assertEqual(resolved, "messy notes")
+        self.assertNotIn("Using session notes", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_resolve_commit_context_preserves_no_notes_fallback(self) -> None:
+        with patch("cartero.cli._read_session_notes", return_value=None), patch(
+            "cartero.cli.is_diff_ambiguous", return_value=False
+        ):
+            resolved, stdout, stderr = self._resolve_context(
+                diff_text="diff --git a/cartero/cli.py ...",
+                raw_context=None,
+                context_file=None,
+            )
+
+        self.assertIsNone(resolved)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "")
+
+    def _resolve_context(
+        self,
+        *,
+        diff_text: str,
+        raw_context: str | None,
+        context_file: str | None,
+    ) -> tuple[str | None, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        resolved = _resolve_commit_raw_context(
+            diff_text,
+            raw_context=raw_context,
+            context_file=context_file,
+            console=Console(file=stdout),
+            error_console=Console(file=stderr),
+        )
+        return resolved, stdout.getvalue(), stderr.getvalue()
+
+
 class CommitCommandTests(unittest.TestCase):
     def test_commit_aborts_when_no_changed_files(self) -> None:
         with patch("cartero.cli.get_changed_files", return_value=[]):
@@ -202,7 +279,10 @@ class CommitCommandTests(unittest.TestCase):
                 "reason: needed for git flow\n"
                 "actions: []\n"
             ),
-        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
+        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch("cartero.cli.archive_session_notes", return_value=None):
             exit_code, stdout, stderr = self._run_commit(["a", "y"])
 
         self.assertEqual(exit_code, 0)
@@ -227,7 +307,10 @@ class CommitCommandTests(unittest.TestCase):
                     "actions": [],
                 },
             ),
-        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
+        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch("cartero.cli.archive_session_notes", return_value=None):
             exit_code, stdout, stderr = self._run_commit(["a", "y"])
 
         self.assertEqual(exit_code, 0)
@@ -252,7 +335,10 @@ class CommitCommandTests(unittest.TestCase):
                 "actions: []\n",
                 commit_fields={"summary": "broken structured data"},
             ),
-        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit:
+        ), patch("cartero.cli.git_commit", return_value="abc1234") as mock_git_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch("cartero.cli.archive_session_notes", return_value=None):
             exit_code, stdout, stderr = self._run_commit(["a", "y"])
 
         self.assertEqual(exit_code, 0)
@@ -273,7 +359,10 @@ class CommitCommandTests(unittest.TestCase):
                 "reason: needed for git flow\n"
                 "actions: []\n"
             ),
-        ), patch("cartero.cli.git_commit") as mock_git_commit:
+        ), patch("cartero.cli.git_commit") as mock_git_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch("cartero.cli.archive_session_notes", return_value=None):
             exit_code, stdout, stderr = self._run_commit(["a", "n"])
 
         self.assertEqual(exit_code, 0)
@@ -288,6 +377,8 @@ class CommitCommandTests(unittest.TestCase):
         ), patch("cartero.cli.get_diff", return_value="diff --git a/file.py b/file.py"), patch(
             "cartero.cli.generate_summary_result_from_diff",
             side_effect=LLMCallError("timeout"),
+        ), patch("cartero.cli._read_session_notes", return_value=None), patch(
+            "cartero.cli.archive_session_notes", return_value=None
         ):
             exit_code, stdout, stderr = self._run_commit(["a"])
 
@@ -372,6 +463,126 @@ class CommitCommandTests(unittest.TestCase):
             "diff --git a/cartero/cli.py ...",
             raw_context="quick repo note",
         )
+
+    def test_commit_archives_session_notes_after_successful_local_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text("quick repo note", encoding="utf-8")
+            archive_path = (
+                Path(temp_dir)
+                / ".cartero"
+                / "archive"
+                / "session-notes-2026-04-06-141516.md"
+            )
+
+            with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+                "cartero.cli.stage_files"
+            ), patch(
+                "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+            ), patch(
+                "cartero.cli.generate_summary_result_from_diff",
+                return_value=_summary_result(
+                    "summary: add commit command\n"
+                    "reason: needed for git flow\n"
+                    "actions: []\n"
+                ),
+            ), patch("cartero.cli.git_commit", return_value="abc1234"), patch(
+                "cartero.session_summary.get_current_time",
+                return_value=FIXED_ARCHIVE_TIME,
+            ):
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a", "y"])
+                finally:
+                    os.chdir(original_cwd)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertFalse(notes_path.exists())
+            self.assertTrue(archive_path.exists())
+            self.assertEqual(archive_path.read_text(encoding="utf-8"), "quick repo note")
+            self.assertIn(
+                "Archived session notes to .cartero/archive/session-notes-2026-04-06-141516.md.",
+                stdout,
+            )
+
+    def test_commit_does_not_archive_session_notes_when_commit_is_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text("quick repo note", encoding="utf-8")
+            archive_path = (
+                Path(temp_dir)
+                / ".cartero"
+                / "archive"
+                / "session-notes-2026-04-06-141516.md"
+            )
+
+            with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+                "cartero.cli.stage_files"
+            ), patch(
+                "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+            ), patch(
+                "cartero.cli.generate_summary_result_from_diff",
+                return_value=_summary_result(
+                    "summary: add commit command\n"
+                    "reason: needed for git flow\n"
+                    "actions: []\n"
+                ),
+            ), patch("cartero.cli.git_commit") as mock_git_commit, patch(
+                "cartero.session_summary.get_current_time",
+                return_value=FIXED_ARCHIVE_TIME,
+            ):
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a", "n"])
+                finally:
+                    os.chdir(original_cwd)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("Aborted.", stdout)
+            self.assertTrue(notes_path.exists())
+            self.assertFalse(archive_path.exists())
+            mock_git_commit.assert_not_called()
+
+    def test_commit_does_not_archive_session_notes_when_generation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text("quick repo note", encoding="utf-8")
+            archive_path = (
+                Path(temp_dir)
+                / ".cartero"
+                / "archive"
+                / "session-notes-2026-04-06-141516.md"
+            )
+
+            with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
+                "cartero.cli.stage_files"
+            ), patch(
+                "cartero.cli.get_diff", return_value="diff --git a/cartero/cli.py ..."
+            ), patch(
+                "cartero.cli.generate_summary_result_from_diff",
+                side_effect=LLMCallError("timeout"),
+            ), patch(
+                "cartero.session_summary.get_current_time",
+                return_value=FIXED_ARCHIVE_TIME,
+            ):
+                original_cwd = os.getcwd()
+                os.chdir(temp_dir)
+                try:
+                    exit_code, stdout, stderr = self._run_commit(["a"])
+                finally:
+                    os.chdir(original_cwd)
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("error:", stderr)
+            self.assertTrue(notes_path.exists())
+            self.assertFalse(archive_path.exists())
 
     def test_commit_prompts_for_note_when_diff_is_ambiguous_and_no_context_exists(self) -> None:
         with patch("cartero.cli.get_changed_files", return_value=["cartero/cli.py"]), patch(
@@ -479,7 +690,10 @@ class CommitCommandTests(unittest.TestCase):
             ),
         ), patch(
             "cartero.cli.git_commit", return_value="abc1234"
-        ) as mock_git_commit:
+        ) as mock_git_commit, patch(
+            "cartero.cli._read_session_notes",
+            return_value=None,
+        ), patch("cartero.cli.archive_session_notes", return_value=None):
             exit_code, stdout, stderr = self._run_commit(
                 ["y", "a", "y"],
                 guard=stale_guard,
@@ -527,6 +741,35 @@ class CommitCommandTests(unittest.TestCase):
             system_state_exists=True,
             system_state_initialized=False,
         )
+
+
+class SessionNotesArchiveTests(unittest.TestCase):
+    def test_archive_session_notes_uses_stable_timestamped_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / ".cartero" / "session-notes.md"
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text("quick repo note", encoding="utf-8")
+            expected_path = (
+                Path(temp_dir)
+                / ".cartero"
+                / "archive"
+                / "session-notes-2026-04-06-141516.md"
+            )
+
+            original_cwd = os.getcwd()
+            os.chdir(temp_dir)
+            try:
+                archive_path = archive_session_notes(archived_at=FIXED_ARCHIVE_TIME)
+            finally:
+                os.chdir(original_cwd)
+
+            self.assertEqual(
+                archive_path,
+                Path(".cartero/archive/session-notes-2026-04-06-141516.md"),
+            )
+            self.assertFalse(notes_path.exists())
+            self.assertTrue(expected_path.exists())
+            self.assertEqual(expected_path.read_text(encoding="utf-8"), "quick repo note")
 
 
 class NoteCommandTests(unittest.TestCase):

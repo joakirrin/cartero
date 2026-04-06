@@ -60,6 +60,25 @@ What this does:
   - decisions
   - tradeoffs
   - user impact
+- this broader recap is for `cartero context` and generation flows, not for `cartero session --import`
+
+### Import session summary notes
+
+Use:
+
+```bash
+cartero session --import
+```
+
+What this does:
+- imports a strict v1 `CARTERO_SESSION_V1` block
+- accepts only:
+  - decisions
+  - tradeoffs
+  - risks_open_issues
+- preserves raw and normalized artifacts for comparison
+- preserves raw backups and fails safely if parsing fails
+- defers broader fields such as goal, user problem, and user impact to a later phase
 
 ### Stage files and create a commit
 

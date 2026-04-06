@@ -83,6 +83,12 @@ Core model:
   - decisions
   - tradeoffs
   - user impact
+- treat that broader recap as the `cartero context` / generation contract, not the `cartero session --import` contract
+- `cartero session --import` v1 accepts only:
+  - decisions
+  - tradeoffs
+  - risks_open_issues
+- broader imported session-summary fields such as goal, user problem, and user impact are deferred to a later phase
 - follow the documented generation flow:
   1. process context if provided
   2. combine recap and diff

@@ -31,15 +31,35 @@ Cartero is evolving from a commit tool into a full system for turning code into 
 
 * Generate structured commit summaries from git diffs (`cartero generate`)
 * Generate product-style changelog entries with real-time streaming (`cartero changelog`)
-* Generate a session brief from the master context, ready to paste into any LLM (`cartero session`)
+* Inspect and import structured session summaries into `.cartero/session-notes.md` (`cartero session`)
 * Stage files and create git commits in plain language (`cartero commit`)
-* Append quick repo-local session notes for commit context (`cartero note`)
+* Append quick repo-local session notes manually when needed (`cartero note`)
 * Compress raw notes or LLM conversations into structured context (`cartero context`)
 * Validate and execute structured change summaries safely (`cartero run`)
 * Optional context support — provide notes or conversations to improve output quality
 * Multi-provider LLM support (Anthropic and Gemini)
 
-When `cartero commit` runs without `--context-file`, it now checks `.cartero/session-notes.md` first and uses those notes as raw commit context when present.
+When `cartero commit` runs without `--context-file`, it checks `.cartero/session-notes.md` first and uses those notes as raw commit context when present. If `--context-file` is provided, it keeps precedence and Cartero uses that file instead. After a successful local commit, Cartero archives the current session notes to `.cartero/archive/session-notes-YYYY-MM-DD-HHMMSS.md`.
+
+## Session Context Flow
+
+Use `cartero session` to inspect the current `.cartero/session-notes.md` file and see whether the required session fields are present:
+
+```bash
+cartero session
+```
+
+Use `cartero session --import` to paste a single strict v1 `CARTERO_SESSION_V1` block from an external LLM. The current import contract accepts only:
+
+- `decisions`
+- `tradeoffs`
+- `risks_open_issues`
+
+Cartero preserves the raw pasted block, parses it into normalized field/value form, appends a timestamped `[LLM]` entry to `.cartero/session-notes.md`, and stores comparison artifacts in `.cartero/session-summary/` plus `.cartero/archive/`.
+
+If the block is malformed, Cartero still preserves the raw backups and fails safely without writing normalized artifacts.
+
+`cartero note` remains available for manual notes, but it is now the fallback path rather than the primary session-context flow.
 
 ### What’s coming next
 
@@ -85,3 +105,4 @@ Use `summary.parity` to confirm the structured `commit_fields` still align with 
 
 The command exits with code `1` when the report contains fail-level cases or parity mismatches, so it can be used as a lightweight gating check.
 # note flow test
+# test commit phase2
