@@ -106,3 +106,4 @@ Use `summary.parity` to confirm the structured `commit_fields` still align with 
 The command exits with code `1` when the report contains fail-level cases or parity mismatches, so it can be used as a lightweight gating check.
 # note flow test
 # test commit phase2
+# precedence test
